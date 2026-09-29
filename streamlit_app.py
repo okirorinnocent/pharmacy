@@ -1,18 +1,26 @@
 from app.services.credit_engine import credit_engine
 from app.config import settings
 from supabase import create_client
-import pandas as pd
 import streamlit as st
+import pandas as pd
 import sys
 from pathlib import Path
 
-# Add project root directory to Python path
-sys.path.append(str(Path(__file__).resolve().parent))
+# 1. ALWAYS modify sys.path BEFORE importing local project modules
+root_path = Path(__file__).resolve().parent
+if str(root_path) not in sys.path:
+    sys.path.insert(0, str(root_path))
 
+# 2. Standard third-party library imports
 
-# Rest of your streamlit code below...
+# 3. Local application imports (after sys.path update)
 
-st.set_page_config(page_title="MedSupply Uganda Dashboard", layout="wide")
+# --- STREAMLIT DASHBOARD PAGE CONFIGURATION ---
+st.set_page_config(
+    page_title="MedSupply Uganda Dashboard",
+    page_icon="🏥",
+    layout="wide"
+)
 
 # Initialize Supabase Sync Client for Streamlit
 supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
@@ -24,16 +32,20 @@ choice = st.sidebar.selectbox("Navigation", menu)
 
 if choice == "Overview":
     st.header("System Overview")
-    outlets_count = len(supabase.table(
-        "drug_outlets").select("id").execute().data or [])
-    orders_data = supabase.table("orders").select(
-        "id, total_amount_ugx, status").execute().data or []
+
+    outlets_res = supabase.table("drug_outlets").select("id").execute()
+    outlets_count = len(outlets_res.data or [])
+
+    orders_res = supabase.table("orders").select(
+        "id, total_amount_ugx, status").execute()
+    orders_data = orders_res.data or []
 
     col1, col2, col3 = st.columns(3)
     col1.metric("Registered Outlets", outlets_count)
     col2.metric("Total Orders", len(orders_data))
+
     total_rev = sum([o["total_amount_ugx"]
-                    for o in orders_data if o["status"] == "DELIVERED"])
+                    for o in orders_data if o.get("status") == "DELIVERED"])
     col3.metric("Revenue (UGX)", f"{total_rev:,.0f}")
 
 elif choice == "Drug Outlets & Credit":
@@ -57,22 +69,31 @@ elif choice == "Drug Outlets & Credit":
 
         if st.button("Calculate Approved Limit"):
             limit = credit_engine.calculate_credit_limit(
-                completed_orders, avg_order, repayment_score)
+                completed_orders, avg_order, repayment_score
+            )
             st.success(f"Calculated Credit Limit: UGX {limit:,.0f}")
 
+            # Direct action button for updating the credit limit in Supabase
             if st.button("Save Limit to Database"):
                 supabase.table("drug_outlets").update(
-                    {"credit_limit_ugx": limit}).eq("id", outlet_row["id"]).execute()
+                    {"credit_limit_ugx": limit}
+                ).eq("id", outlet_row["id"]).execute()
                 st.info("Updated successfully!")
+    else:
+        st.info("No registered drug outlets found in the database.")
 
 elif choice == "Inventory Management":
     st.header("Stock Inventory")
     items = supabase.table("inventory_items").select("*").execute().data
     if items:
         st.dataframe(pd.DataFrame(items), use_container_width=True)
+    else:
+        st.info("No inventory items found.")
 
 elif choice == "Orders":
     st.header("Order Logs")
     orders = supabase.table("orders").select("*").execute().data
     if orders:
         st.dataframe(pd.DataFrame(orders), use_container_width=True)
+    else:
+        st.info("No orders recorded yet.")
