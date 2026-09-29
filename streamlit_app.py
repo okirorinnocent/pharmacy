@@ -119,7 +119,6 @@ if "outlets_df" not in st.session_state:
         }
     ])
 
-# FIXED: Expiry Date initialized as python datetime.date objects to prevent editor crashes
 if "inventory_df" not in st.session_state:
     st.session_state.inventory_df = pd.DataFrame([
         {
@@ -137,7 +136,7 @@ if "inventory_df" not in st.session_state:
             "Product Name": "Paracetamol 500mg (Box of 100)",
             "Category": "Analgesics",
             "Unit Price (UGX)": 12000,
-            "Stock Quantity": 120,  # Below 200 threshold for low stock alert
+            "Stock Quantity": 120,
             "Batch Number": "PAR-2026-01C",
             "Expiry Date": datetime.date(2027, 12, 15),
             "NDA Reg No": "NDA/UG/MED-1029"
@@ -192,12 +191,10 @@ if "chat_history" not in st.session_state:
     st.session_state.chat_history = [
         {
             "role": "bot",
-            "msg": "👋 Welcome to **MedSupply Uganda Professional Support**.\n\nHow can I help you today? Click a quick topic below or type your inquiry.",
+            "msg": "👋 Welcome to **MedSupply Uganda Support**.\n\nHow can I help you today?",
             "time": datetime.datetime.now().strftime("%H:%M")
         }
     ]
-
-# Phone Validator Function
 
 
 def validate_uganda_phone(phone_str):
@@ -205,23 +202,38 @@ def validate_uganda_phone(phone_str):
     return re.match(pattern, phone_str) is not None
 
 
-# --- 4. SIDEBAR NAVIGATION ---
+# --- 4. SIDEBAR NAVIGATION & ROLE ACCESS CONTROL ---
 with st.sidebar:
     st.image("https://img.icons8.com/color/96/medical-heart.png", width=60)
     st.title("MedSupply Uganda")
     st.caption("B2B Digital Pharma Platform")
     st.divider()
 
-    menu = [
-        "🛒 Place New Order",
-        "🔔 Delivery Notifications",
-        "🚚 Seller Control Center",
-        "💬 WhatsApp Assistant",
-        "📱 Payment Gateways",
-        "📦 Inventory Management",
-        "🏥 Outlets & Credit Lines",
-        "📋 Master Order Logs"
-    ]
+    # Role Selector for Access Control
+    user_role = st.radio("👤 Select Portal View", [
+                         "Customer / Buyer", "Staff / Admin"], horizontal=True)
+    st.divider()
+
+    # Restrict Navigation Options based on Role
+    if user_role == "Customer / Buyer":
+        menu = [
+            "🛒 Place New Order",
+            "🔔 Delivery Notifications",
+            "💬 WhatsApp Assistant",
+            "📱 Payment Gateways"
+        ]
+    else:
+        menu = [
+            "📦 Inventory Management",
+            "🚚 Seller Control Center",
+            "🏥 Outlets & Credit Lines",
+            "📋 Master Order Logs",
+            "🛒 Place New Order",
+            "🔔 Delivery Notifications",
+            "💬 WhatsApp Assistant",
+            "📱 Payment Gateways"
+        ]
+
     choice = st.selectbox("Navigation Menu", menu)
 
     unread_count = len(st.session_state.orders_df[st.session_state.orders_df["Status"].isin(
@@ -231,11 +243,10 @@ with st.sidebar:
 
 # --- 5. PAGE ROUTING ---
 
-# CHOICE 1: PLACE NEW ORDER
+# CHOICE: PLACE NEW ORDER
 if choice == "🛒 Place New Order":
     st.header("🛒 Place Order & Notification Setup")
-    st.caption(
-        "Configure recipient details to receive instant notification alerts when the seller triggers delivery.")
+    st.caption("Select items and recipient details to place your B2B order.")
 
     col_a, col_b = st.columns(2, gap="medium")
 
@@ -263,8 +274,15 @@ if choice == "🛒 Place New Order":
         item_row = st.session_state.inventory_df[st.session_state.inventory_df["Product Name"]
                                                  == selected_item_name].iloc[0]
 
-        st.info(
-            f"📋 **Batch No:** `{item_row['Batch Number']}` | **Expiry:** `{item_row['Expiry Date']}` | **NDA Reg:** `{item_row['NDA Reg No']}`")
+        # ROLE BASED PRIVACY: Customers see availability status, Staff see detailed stock & batches
+        if user_role == "Staff / Admin":
+            st.info(
+                f"📋 **Batch No:** `{item_row['Batch Number']}` | **Expiry:** `{item_row['Expiry Date']}` | **NDA Reg:** `{item_row['NDA Reg No']}` | **Stock:** `{item_row['Stock Quantity']}` units")
+        else:
+            if item_row["Stock Quantity"] > 0:
+                st.success("✅ **Availability:** In Stock (Ready for Dispatch)")
+            else:
+                st.error("❌ **Availability:** Out of Stock")
 
         quantity = st.number_input("Quantity (Boxes)", min_value=1, value=5)
 
@@ -313,7 +331,7 @@ if choice == "🛒 Place New Order":
             st.error("⚠️ Please ensure Recipient Name and Email are provided.")
         elif quantity > item_row["Stock Quantity"]:
             st.error(
-                f"❌ Insufficient stock. Only {item_row['Stock Quantity']} units available.")
+                "❌ Order quantity exceeds available warehouse stock. Please contact support or reduce quantity.")
         else:
             st.session_state.inventory_df.loc[
                 st.session_state.inventory_df["Product Name"] == selected_item_name, "Stock Quantity"
@@ -348,11 +366,10 @@ if choice == "🛒 Place New Order":
             st.success(
                 f"✅ Order **{order_id}** successfully recorded! Delivery alerts routed to **{recipient_name} ({recipient_phone})**.")
 
-# CHOICE 2: DELIVERY NOTIFICATIONS
+# CHOICE: DELIVERY NOTIFICATIONS
 elif choice == "🔔 Delivery Notifications":
     st.header("🔔 Live Delivery Notifications & Order Tracker")
-    st.caption(
-        "Real-time system updates sent to facility managers upon order fulfillment.")
+    st.caption("Real-time updates sent to recipients upon order fulfillment.")
 
     delivered_orders = st.session_state.orders_df[st.session_state.orders_df["Status"].isin([
                                                                                             "Arrived", "Delivered"])]
@@ -381,10 +398,10 @@ elif choice == "🔔 Delivery Notifications":
                 if st.button(f"⚠️ Report Issue", key=f"rep_{order['OrderID']}"):
                     st.warning("Issue ticket opened with MedSupply Support.")
     else:
-        st.info("No new delivery alerts at this moment.")
+        st.info("No active delivery notifications.")
 
     st.divider()
-    st.subheader("📦 Interactive All Orders Tracker")
+    st.subheader("📦 Order Tracker")
 
     search_q = st.text_input("🔍 Search by Order ID, Outlet, or Recipient Name")
     status_filter = st.multiselect("Filter by Status", options=[
@@ -399,13 +416,19 @@ elif choice == "🔔 Delivery Notifications":
         ]
     df_display = df_display[df_display["Status"].isin(status_filter)]
 
-    st.dataframe(df_display, use_container_width=True)
+    # Filter columns for Customer view vs Staff view
+    if user_role == "Customer / Buyer":
+        customer_cols = ["OrderID", "Outlet", "Product Name", "Quantity",
+                         "Total Amount (UGX)", "Payment Method", "Status", "Date"]
+        st.dataframe(df_display[customer_cols], use_container_width=True)
+    else:
+        st.dataframe(df_display, use_container_width=True)
 
-# CHOICE 3: SELLER CONTROL CENTER
+# CHOICE: SELLER CONTROL CENTER (STAFF ONLY)
 elif choice == "🚚 Seller Control Center":
     st.header("🚚 Seller Dashboard: Dispatch & Delivery Trigger")
     st.caption(
-        "Manage B2B order fulfillments, upload Proof of Delivery (POD), and update real-time delivery statuses.")
+        "Manage B2B order fulfillments, upload Proof of Delivery (POD), and update delivery statuses.")
 
     search_term = st.text_input(
         "Search Pending Shipments", placeholder="Enter Order ID or Facility Name...")
@@ -446,9 +469,9 @@ elif choice == "🚚 Seller Control Center":
                 st.write(f"✅ **Delivery Confirmed at {row['Delivery Time']}**")
             st.divider()
 
-# CHOICE 4: WHATSAPP ASSISTANT
+# CHOICE: WHATSAPP ASSISTANT
 elif choice == "💬 WhatsApp Assistant":
-    st.header("💬 Professional WhatsApp Business Assistant")
+    st.header("💬 Professional WhatsApp Assistant")
 
     col_chat, col_info = st.columns([3, 1])
 
@@ -517,7 +540,7 @@ elif choice == "💬 WhatsApp Assistant":
                 {"role": "bot", "msg": bot_reply, "time": now_t})
             st.rerun()
 
-# CHOICE 5: PAYMENT GATEWAYS
+# CHOICE: PAYMENT GATEWAYS
 elif choice == "📱 Payment Gateways":
     st.header("📱 B2B Payment Gateway Integration")
 
@@ -563,7 +586,7 @@ elif choice == "📱 Payment Gateways":
         st.write("**Account Number:** 9030012345678")
         st.write("**Branch:** Kampala Corporate Branch")
 
-# CHOICE 6: INVENTORY MANAGEMENT
+# CHOICE: INVENTORY MANAGEMENT (STAFF ONLY WITH WORKING STOCK UPDATES)
 elif choice == "📦 Inventory Management":
     st.header("📦 Warehouse Stock Management")
     st.caption(
@@ -578,7 +601,7 @@ elif choice == "📦 Inventory Management":
 
     st.subheader("Interactive Stock Editor")
 
-    # Callback to commit edits directly into st.session_state
+    # Callback to commit stock updates directly into st.session_state
     def update_inventory():
         edited_state = st.session_state["inventory_editor"]
 
@@ -600,7 +623,6 @@ elif choice == "📦 Inventory Management":
                 edited_state["deleted_rows"]
             ).reset_index(drop=True)
 
-    # Render data_editor linked to session state
     st.data_editor(
         st.session_state.inventory_df,
         column_config={
@@ -618,7 +640,8 @@ elif choice == "📦 Inventory Management":
         key="inventory_editor",
         on_change=update_inventory
     )
-# CHOICE 7: OUTLETS & CREDIT LINES
+
+# CHOICE: OUTLETS & CREDIT LINES (STAFF ONLY)
 elif choice == "🏥 Outlets & Credit Lines":
     st.header("🏥 Registered Outlets & Credit Facilities")
 
@@ -635,7 +658,7 @@ elif choice == "🏥 Outlets & Credit Lines":
             if utilization > 0.8:
                 st.warning("⚠️ High Credit Utilization Warning (>80%)")
 
-# CHOICE 8: MASTER ORDER LOGS
+# CHOICE: MASTER ORDER LOGS (STAFF ONLY)
 elif choice == "📋 Master Order Logs":
     st.header("📋 Master Order Logs & Executive Analytics")
 
