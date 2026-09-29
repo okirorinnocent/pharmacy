@@ -288,7 +288,7 @@ with st.sidebar:
 # --- 5. PAGE ROUTING ---
 
 # CHOICE: ACCOUNT PORTAL (LOGIN & SIGNUP)
-elif choice == "🔐 Account Portal":
+if choice == "🔐 Account Portal":
     st.header("🔐 User Account Portal")
     st.caption(
         "Create an account or log in to manage orders, credit lines, and delivery tracking.")
@@ -390,6 +390,7 @@ elif choice == "🔐 Account Portal":
                 st.success(
                     "🎉 Account successfully registered! You are now logged in.")
                 st.rerun()
+
 # CHOICE: PLACE NEW ORDER
 elif choice == "🛒 Place New Order":
     st.header("🛒 Place Order & Notification Setup")
@@ -519,7 +520,7 @@ elif choice == "🔔 Delivery Notifications":
     st.caption("Real-time updates sent to recipients upon order fulfillment.")
 
     delivered_orders = st.session_state.orders_df[st.session_state.orders_df["Status"].isin([
-                                                                                            "Arrived", "Delivered"])]
+                                                  "Arrived", "Delivered"])]
 
     if not delivered_orders.empty:
         for _, order in delivered_orders.iterrows():
