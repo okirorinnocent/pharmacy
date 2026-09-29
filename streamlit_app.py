@@ -3,6 +3,9 @@ import pandas as pd
 import uuid
 import datetime
 import re
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(
@@ -92,9 +95,59 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 3. GLOBAL SHARED STATE INITIALIZATION (REALTIME MULTI-USER) ---
+
+# --- AUTOMATIC EMAIL DISPATCH UTILITY ---
+def send_delivery_email(recipient_email, recipient_name, order_id, product_name, quantity, total_amount, delivery_time):
+    """Sends an automatic delivery notification email to the customer upon order confirmation."""
+    subject = f"🚚 Order Delivered: {order_id} - MedSupply Uganda"
+
+    html_content = f"""
+    <html>
+    <body style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">
+        <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+            <h2 style="color: #059669;">MedSupply Uganda</h2>
+            <hr style="border: 0; border-top: 1px solid #eeeeee;">
+            <p>Dear <strong>{recipient_name}</strong>,</p>
+            <p>Your order <strong>{order_id}</strong> has been successfully delivered to your facility.</p>
+            
+            <div style="background-color: #f8fafc; padding: 15px; border-radius: 6px; margin: 15px 0;">
+                <h4 style="margin-top: 0; color: #1e293b;">Delivery Summary</h4>
+                <p><strong>Order ID:</strong> {order_id}<br>
+                <strong>Product Delivered:</strong> {product_name} ({quantity} Boxes)<br>
+                <strong>Total Amount:</strong> UGX {total_amount:,.0f}<br>
+                <strong>Exact Timestamp:</strong> {delivery_time}</p>
+            </div>
+            
+            <p>Please log in to your account portal to acknowledge receipt and verify the batch details.</p>
+            <p style="font-size: 0.85rem; color: #64748b;">MedSupply Uganda Operations Team<br>Contact: +256763212490</p>
+        </div>
+    </body>
+    </html>
+    """
+
+    # Attempt real email dispatch via st.secrets if SMTP configuration is present
+    try:
+        smtp_server = st.secrets["smtp"]["server"]
+        smtp_port = st.secrets["smtp"]["port"]
+        sender_email = st.secrets["smtp"]["email"]
+        sender_password = st.secrets["smtp"]["password"]
+
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = f"MedSupply Uganda <{sender_email}>"
+        msg["To"] = recipient_email
+        msg.attach(MIMEText(html_content, "html"))
+
+        with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
+            server.login(sender_email, sender_password)
+            server.sendmail(sender_email, recipient_email, msg.as_string())
+        return True, "Email sent via SMTP server"
+    except Exception:
+        # Fallback to simulated delivery notification if secrets/SMTP are unconfigured
+        return False, f"Simulated Email Notification generated for {recipient_email}"
 
 
+# --- 3. GLOBAL SHARED STATE INITIALIZATION ---
 @st.cache_resource
 def get_global_database():
     """Returns persistent data shared across ALL connected browser sessions/users."""
@@ -225,7 +278,7 @@ def get_global_database():
 # Load the shared memory database
 db = get_global_database()
 
-# Session-specific state (isolated per tab)
+# Session-specific state
 if "current_user" not in st.session_state:
     st.session_state.current_user = None
 
@@ -307,7 +360,7 @@ with st.sidebar:
 
 # --- 5. PAGE ROUTING ---
 
-# CHOICE: ACCOUNT PORTAL (LOGIN & SIGNUP)
+# CHOICE: ACCOUNT PORTAL
 if choice == "🔐 Account Portal":
     st.header("🔐 User Account Portal")
     st.caption(
@@ -315,7 +368,6 @@ if choice == "🔐 Account Portal":
 
     tab_login, tab_signup = st.tabs(["🔑 Log In", "📝 Create New Account"])
 
-    # --- 1. LOGIN TAB ---
     with tab_login:
         st.subheader("Login to Your Account")
         with st.form("login_form", clear_on_submit=False):
@@ -341,7 +393,6 @@ if choice == "🔐 Account Portal":
                 st.error(
                     "❌ Account not found. Please register first under 'Create New Account'.")
 
-    # --- 2. SIGNUP TAB ---
     with tab_signup:
         st.subheader("Register Pharmacy / Clinic Account")
 
@@ -372,7 +423,7 @@ if choice == "🔐 Account Portal":
                 st.error("⚠️ Please fill in all required fields marked with *.")
             elif not validate_uganda_phone(new_phone):
                 st.error(
-                    "⚠️ Invalid Ugandan Phone Format! Ensure it starts with `+256` followed by 9 digits (e.g., +256770665588).")
+                    "⚠️ Invalid Ugandan Phone Format! Ensure it starts with `+256` followed by 9 digits.")
             elif new_email in db["users"]:
                 st.error(
                     "⚠️ An account with this email already exists. Please log in.")
@@ -425,8 +476,8 @@ elif choice == "🛒 Place New Order":
             selected_outlet_name = st.text_input(
                 "Registered Outlet", value=user_info["business_name"], disabled=True)
 
-            category_filter = st.selectbox("Filter Category", [
-                                           "All"] + list(db["inventory"]["Category"].unique()))
+            category_filter = st.selectbox(
+                "Filter Category", ["All"] + list(db["inventory"]["Category"].unique()))
 
             if category_filter != "All":
                 filtered_inv = db["inventory"][db["inventory"]
@@ -482,12 +533,8 @@ elif choice == "🛒 Place New Order":
                       delta=f"-UGX {base_price - total_price:,.0f}" if discount > 0 else None)
 
         with col_pay:
-            payment_method = st.radio(
-                "Payment Method",
-                ["MTN Mobile Money", "Airtel Money",
-                    "Trade Credit Line", "Cash on Delivery"],
-                horizontal=True
-            )
+            payment_method = st.radio("Payment Method", [
+                                      "MTN Mobile Money", "Airtel Money", "Trade Credit Line", "Cash on Delivery"], horizontal=True)
 
         if st.button("🚀 Confirm Order & Register Recipient", type="primary", use_container_width=True):
             if not validate_uganda_phone(recipient_phone):
@@ -496,9 +543,8 @@ elif choice == "🛒 Place New Order":
             elif quantity > item_row["Stock Quantity"]:
                 st.error("❌ Order quantity exceeds available warehouse stock.")
             else:
-                db["inventory"].loc[
-                    db["inventory"]["Product Name"] == selected_item_name, "Stock Quantity"
-                ] -= quantity
+                db["inventory"].loc[db["inventory"]["Product Name"] ==
+                                    selected_item_name, "Stock Quantity"] -= quantity
 
                 order_id = f"ORD-{uuid.uuid4().hex[:4].upper()}"
 
@@ -525,13 +571,11 @@ elif choice == "🛒 Place New Order":
                     [pd.DataFrame([new_order]), db["orders"]], ignore_index=True)
 
                 if payment_method == "Trade Credit Line":
-                    db["outlets"].loc[
-                        db["outlets"]["Business Name"] == user_info[
-                            "business_name"], "Used Credit (UGX)"
-                    ] += total_price
+                    db["outlets"].loc[db["outlets"]["Business Name"] ==
+                                      user_info["business_name"], "Used Credit (UGX)"] += total_price
 
                 st.success(
-                    f"✅ Order **{order_id}** recorded! Realtime delivery alerts routed to **{recipient_name} ({recipient_phone})**.")
+                    f"✅ Order **{order_id}** recorded! Email notifications configured for **{recipient_email}**.")
 
 # CHOICE: DELIVERY NOTIFICATIONS
 elif choice == "🔔 Delivery Notifications":
@@ -597,11 +641,11 @@ elif choice == "🔔 Delivery Notifications":
     else:
         st.dataframe(df_display, use_container_width=True)
 
-# CHOICE: SELLER CONTROL CENTER (STAFF ONLY) - WITH REALTIME AUTO-REFRESH & DETECTION
+# CHOICE: SELLER CONTROL CENTER
 elif choice == "🚚 Seller Control Center":
     st.header("🚚 Seller Dashboard: Dispatch & Delivery Trigger")
     st.caption(
-        "Manage B2B order fulfillments, track payments on delivery, and detect correct items in real time.")
+        "Manage B2B order fulfillments, track payments on delivery, and automatically email customers upon delivery.")
 
     @st.fragment(run_every=5)
     def render_live_seller_dashboard():
@@ -622,7 +666,7 @@ elif choice == "🚚 Seller Control Center":
                 col1, col2, col3 = st.columns([2, 2, 2])
 
                 col1.write(
-                    f"👤 **Recipient:** {row['Recipient Name']}\n📞 {row['Recipient Phone']}")
+                    f"👤 **Recipient:** {row['Recipient Name']}\n📞 {row['Recipient Phone']}\n📧 {row['Recipient Email']}")
                 col2.write(
                     f"📦 **Item:** {row['Product Name']} ({row['Quantity']} Boxes)\n🏷️ **Batch:** `{row['Batch Number']}`\n💰 **Total:** UGX {row['Total Amount (UGX)']:,.0f}")
                 col3.write(
@@ -634,8 +678,7 @@ elif choice == "🚚 Seller Control Center":
 
                     col_btn1, col_btn2 = st.columns(2)
                     with col_btn1:
-                        if st.button(f"🚚 Trigger Delivered & Paid", key=f"deliv_btn_{row['OrderID']}", type="primary"):
-                            # Accurately generate the current local delivery timestamp
+                        if st.button(f"🚚 Trigger Delivered & Send Email", key=f"deliv_btn_{row['OrderID']}", type="primary"):
                             exact_time_now = datetime.datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
 
                             real_idx = db["orders"][db["orders"]
@@ -648,8 +691,21 @@ elif choice == "🚚 Seller Control Center":
                             db["orders"].at[real_idx,
                                             "Item Verified"] = "Verified Correct Item"
 
+                            # Trigger Automatic Email Dispatch to Customer
+                            email_sent, email_msg = send_delivery_email(
+                                recipient_email=row["Recipient Email"],
+                                recipient_name=row["Recipient Name"],
+                                order_id=row["OrderID"],
+                                product_name=row["Product Name"],
+                                quantity=row["Quantity"],
+                                total_amount=row["Total Amount (UGX)"],
+                                delivery_time=exact_time_now
+                            )
+
                             st.success(
                                 f"Delivery & Payment confirmed for {row['Recipient Name']} at {exact_time_now}!")
+                            st.info(
+                                f"📧 **Automatic Notification:** {email_msg}")
                             st.rerun()
                     with col_btn2:
                         if st.button(f"❌ Detect Mismatch Item", key=f"mismatch_{row['OrderID']}"):
@@ -784,7 +840,7 @@ elif choice == "📱 Payment Gateways":
         st.write("**Account Number:** 9030012345678")
         st.write("**Branch:** Kampala Corporate Branch")
 
-# CHOICE: INVENTORY MANAGEMENT (STAFF ONLY)
+# CHOICE: INVENTORY MANAGEMENT
 elif choice == "📦 Inventory Management":
     st.header("📦 Warehouse Stock Management")
     st.caption(
@@ -807,14 +863,11 @@ elif choice == "📦 Inventory Management":
 
         for new_row in edited_state.get("added_rows", []):
             db["inventory"] = pd.concat(
-                [db["inventory"], pd.DataFrame([new_row])],
-                ignore_index=True
-            )
+                [db["inventory"], pd.DataFrame([new_row])], ignore_index=True)
 
         if edited_state.get("deleted_rows"):
             db["inventory"] = db["inventory"].drop(
-                edited_state["deleted_rows"]
-            ).reset_index(drop=True)
+                edited_state["deleted_rows"]).reset_index(drop=True)
 
     st.data_editor(
         db["inventory"],
@@ -834,8 +887,8 @@ elif choice == "📦 Inventory Management":
         on_change=update_inventory
     )
 
-# CHOICE: OUTLETS & CREDIT LINES (STAFF ONLY)
-elif choice == "🏥 Outlets & Credit Lines":
+# CHOICE: OUTLETS & CREDIT LINES
+elif choice == "🏥 Outlets & Credit Facilities":
     st.header("🏥 Registered Outlets & Credit Facilities")
 
     for _, row in db["outlets"].iterrows():
@@ -851,7 +904,7 @@ elif choice == "🏥 Outlets & Credit Lines":
             if utilization > 0.8:
                 st.warning("⚠️ High Credit Utilization Warning (>80%)")
 
-# CHOICE: MASTER ORDER LOGS (STAFF ONLY) - WITH REALTIME AUTO-REFRESH
+# CHOICE: MASTER ORDER LOGS
 elif choice == "📋 Master Order Logs":
     st.header("📋 Master Order Logs & Executive Analytics")
 
@@ -879,4 +932,4 @@ elif choice == "📋 Master Order Logs":
 
         st.dataframe(db["orders"], use_container_width=True)
 
-    render_live_master_logs()
+    render_live_master_logs()s
