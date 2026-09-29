@@ -93,8 +93,28 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 3. SESSION STATE INITIALIZATION ---
-if "authenticated_user" not in st.session_state:
-    st.session_state.authenticated_user = None
+if "user_accounts" not in st.session_state:
+    st.session_state.user_accounts = {
+        "okirorinnocent49@gmail.com": {
+            "password": "admin",
+            "business_name": "MedSupply HQ",
+            "contact_name": "Okiror Innocent",
+            "phone": "+256763212490",
+            "location": "Kampala Central",
+            "role": "Staff / Admin"
+        },
+        "sarah@carepharma.com": {
+            "password": "password123",
+            "business_name": "Kampala Care Pharmacy",
+            "contact_name": "Dr. Sarah",
+            "phone": "+256771234567",
+            "location": "Kampala Central",
+            "role": "Customer / Buyer"
+        }
+    }
+
+if "current_user" not in st.session_state:
+    st.session_state.current_user = None
 
 if "outlets_df" not in st.session_state:
     st.session_state.outlets_df = pd.DataFrame([
@@ -205,38 +225,32 @@ def validate_uganda_phone(phone_str):
     return re.match(pattern, phone_str) is not None
 
 
-# --- 4. SIDEBAR NAVIGATION & EMAIL AUTHENTICATION ---
-STAFF_EMAILS = ["okirorinnocent49@gmail.com"]
-
+# --- 4. SIDEBAR NAVIGATION & ACCOUNT AUTHENTICATION ---
 with st.sidebar:
     st.image("https://img.icons8.com/color/96/medical-heart.png", width=60)
     st.title("MedSupply Uganda")
     st.caption("B2B Digital Pharma Platform")
     st.divider()
 
-    # User Authentication Block
-    st.subheader("🔐 User Login")
-    user_email_input = st.text_input(
-        "Enter Account Email",
-        value=st.session_state.authenticated_user if st.session_state.authenticated_user else "",
-        placeholder="e.g. okirorinnocent49@gmail.com"
-    ).strip().lower()
-
-    if user_email_input:
-        st.session_state.authenticated_user = user_email_input
-        if user_email_input in STAFF_EMAILS:
-            user_role = "Staff / Admin"
-            st.success("👨‍⚕️ Logged in as **Staff / Operations Manager**")
-        else:
-            user_role = "Customer / Buyer"
-            st.info("🛒 Logged in as **Registered Customer**")
+    # User Account Status Indicator
+    if st.session_state.current_user:
+        user_info = st.session_state.user_accounts[st.session_state.current_user]
+        st.success(
+            f"👤 **Logged in as:**\n{user_info['contact_name']}\n*({user_info['business_name']})*")
+        if st.button("🚪 Log Out", type="secondary"):
+            st.session_state.current_user = None
+            st.rerun()
     else:
-        user_role = "Customer / Buyer"
-        st.caption("ℹ️ Defaulting to **Customer / Buyer** view.")
+        st.warning("🔒 **Not Logged In**\nSign up or log in to place orders.")
 
     st.divider()
 
-    # Dynamic Menu Navigation based on verified Role
+    # Determine user role
+    user_role = "Guest"
+    if st.session_state.current_user:
+        user_role = st.session_state.user_accounts[st.session_state.current_user]["role"]
+
+    # Dynamic Menu Options
     if user_role == "Staff / Admin":
         menu = [
             "📦 Inventory Management",
@@ -246,12 +260,20 @@ with st.sidebar:
             "🛒 Place New Order",
             "🔔 Delivery Notifications",
             "💬 WhatsApp Assistant",
-            "📱 Payment Gateways"
+            "📱 Payment Gateways",
+            "🔐 Account Portal"
         ]
-    else:
+    elif user_role == "Customer / Buyer":
         menu = [
             "🛒 Place New Order",
             "🔔 Delivery Notifications",
+            "💬 WhatsApp Assistant",
+            "📱 Payment Gateways",
+            "🔐 Account Portal"
+        ]
+    else:
+        menu = [
+            "🔐 Account Portal",
             "💬 WhatsApp Assistant",
             "📱 Payment Gateways"
         ]
@@ -265,128 +287,210 @@ with st.sidebar:
 
 # --- 5. PAGE ROUTING ---
 
-# CHOICE: PLACE NEW ORDER
-if choice == "🛒 Place New Order":
-    st.header("🛒 Place Order & Notification Setup")
-    st.caption("Select items and recipient details to place your B2B order.")
+# CHOICE: ACCOUNT PORTAL (LOGIN & SIGNUP)
+if choice == "🔐 Account Portal":
+    st.header("🔐 User Account Portal")
+    st.caption(
+        "Create an account or log in to manage orders, credit lines, and delivery tracking.")
 
-    col_a, col_b = st.columns(2, gap="medium")
+    tab_login, tab_signup = st.tabs(["🔑 Log In", "📝 Create New Account"])
 
-    with col_a:
-        st.subheader("1. Order & Product Selection")
-        selected_outlet_name = st.selectbox(
-            "Select Registered Outlet",
-            st.session_state.outlets_df["Business Name"].tolist()
-        )
+    with tab_login:
+        st.subheader("Login to Your Account")
+        login_email = st.text_input(
+            "Account Email Address", key="login_email_key").strip().lower()
+        login_pass = st.text_input(
+            "Password", type="password", key="login_pass_key")
 
-        outlet_data = st.session_state.outlets_df[st.session_state.outlets_df["Business Name"]
-                                                  == selected_outlet_name].iloc[0]
-
-        category_filter = st.selectbox("Filter Category", [
-                                       "All"] + list(st.session_state.inventory_df["Category"].unique()))
-
-        if category_filter != "All":
-            filtered_inv = st.session_state.inventory_df[
-                st.session_state.inventory_df["Category"] == category_filter]
-        else:
-            filtered_inv = st.session_state.inventory_df
-
-        selected_item_name = st.selectbox(
-            "Select Product", filtered_inv["Product Name"].tolist())
-        item_row = st.session_state.inventory_df[st.session_state.inventory_df["Product Name"]
-                                                 == selected_item_name].iloc[0]
-
-        # RESTRICTED VISIBILITY: Customers see only Availability; Staff sees complete stock & batches
-        if user_role == "Staff / Admin":
-            st.info(
-                f"📋 **Batch No:** `{item_row['Batch Number']}` | **Expiry:** `{item_row['Expiry Date']}` | **NDA Reg:** `{item_row['NDA Reg No']}` | **Stock:** `{item_row['Stock Quantity']}` units")
-        else:
-            if item_row["Stock Quantity"] > 0:
-                st.success("✅ **Availability:** In Stock (Ready for Dispatch)")
+        if st.button("🔑 Log In", type="primary", use_container_width=True):
+            if login_email in st.session_state.user_accounts:
+                if st.session_state.user_accounts[login_email]["password"] == login_pass:
+                    st.session_state.current_user = login_email
+                    st.success(
+                        f"Welcome back, {st.session_state.user_accounts[login_email]['contact_name']}!")
+                    st.rerun()
+                else:
+                    st.error("❌ Incorrect password. Please try again.")
             else:
-                st.error("❌ **Availability:** Out of Stock")
+                st.error(
+                    "❌ Account not found. Please register first under 'Create New Account'.")
 
-        quantity = st.number_input("Quantity (Boxes)", min_value=1, value=5)
+    with tab_signup:
+        st.subheader("Register Pharmacy / Clinic Account")
+        new_biz = st.text_input(
+            "Pharmacy / Business Name", placeholder="e.g. Kampala Care Pharmacy")
+        new_name = st.text_input(
+            "Contact Person Full Name", placeholder="e.g. Dr. Jane Okello")
+        new_email = st.text_input(
+            "Email Address", placeholder="e.g. jane@carepharma.com").strip().lower()
+        new_phone = st.text_input(
+            "WhatsApp Mobile (+256...)", placeholder="e.g. +256770123456")
+        new_loc = st.text_input(
+            "Physical Location / City", placeholder="e.g. Kampala Central")
+        new_pass = st.text_input("Create Password", type="password")
 
-        discount = 0.0
-        if quantity >= 50:
-            discount = 0.10
-            st.caption("🎉 10% Bulk Volume Discount Applied!")
-        elif quantity >= 10:
-            discount = 0.05
-            st.caption("🎉 5% Tiered Volume Discount Applied!")
+        if st.button("📝 Register Account", type="primary", use_container_width=True):
+            if not new_biz or not new_name or not new_email or not new_pass:
+                st.error("⚠️ Please fill in all required fields.")
+            elif not validate_uganda_phone(new_phone):
+                st.error(
+                    "⚠️ Invalid Ugandan Phone Format! Ensure it starts with `+256` followed by 9 digits.")
+            elif new_email in st.session_state.user_accounts:
+                st.error(
+                    "⚠️ An account with this email already exists. Please log in.")
+            else:
+                # Save new account
+                st.session_state.user_accounts[new_email] = {
+                    "password": new_pass,
+                    "business_name": new_biz,
+                    "contact_name": new_name,
+                    "phone": new_phone,
+                    "location": new_loc,
+                    "role": "Staff / Admin" if new_email == "okirorinnocent49@gmail.com" else "Customer / Buyer"
+                }
 
-        base_price = quantity * item_row["Unit Price (UGX)"]
-        total_price = base_price * (1 - discount)
+                # Register outlet in database if not present
+                new_outlet = {
+                    "ID": f"OUT-{uuid.uuid4().hex[:3].upper()}",
+                    "Business Name": new_biz,
+                    "Contact Name": new_name,
+                    "Phone": new_phone,
+                    "Email": new_email,
+                    "Location": new_loc,
+                    "Credit Limit (UGX)": 1000000,
+                    "Used Credit (UGX)": 0,
+                    "Status": "Active"
+                }
+                st.session_state.outlets_df = pd.concat(
+                    [pd.DataFrame([new_outlet]), st.session_state.outlets_df], ignore_index=True)
 
-    with col_b:
-        st.subheader("2. Delivery Recipient Details")
-        st.caption("Auto-filled from registered outlet profile:")
+                st.session_state.current_user = new_email
+                st.success(
+                    "🎉 Account successfully created! You are now logged in.")
+                st.rerun()
 
-        recipient_name = st.text_input(
-            "Recipient Full Name", value=outlet_data["Contact Name"])
-        recipient_phone = st.text_input(
-            "Recipient WhatsApp Number (+256...)", value=outlet_data["Phone"])
-        recipient_email = st.text_input(
-            "Recipient Email Address", value=outlet_data["Email"])
+# CHOICE: PLACE NEW ORDER
+elif choice == "🛒 Place New Order":
+    st.header("🛒 Place Order & Notification Setup")
 
-    st.divider()
+    if not st.session_state.current_user:
+        st.warning(
+            "🔒 **Authentication Required:** You must log in or register an account before placing an order.")
+        st.info("Please navigate to **🔐 Account Portal** in the sidebar to proceed.")
+    else:
+        user_info = st.session_state.user_accounts[st.session_state.current_user]
 
-    col_price, col_pay = st.columns([1, 2])
-    with col_price:
-        st.metric("Total Payable Amount", f"UGX {total_price:,.0f}",
-                  delta=f"-UGX {base_price - total_price:,.0f}" if discount > 0 else None)
+        col_a, col_b = st.columns(2, gap="medium")
 
-    with col_pay:
-        payment_method = st.radio(
-            "Payment Method",
-            ["MTN Mobile Money", "Airtel Money",
-                "Trade Credit Line", "Bank Wire Transfer"],
-            horizontal=True
-        )
+        with col_a:
+            st.subheader("1. Order & Product Selection")
+            selected_outlet_name = st.text_input(
+                "Registered Outlet", value=user_info["business_name"], disabled=True)
 
-    if st.button("🚀 Confirm Order & Register Recipient", type="primary", use_container_width=True):
-        if not validate_uganda_phone(recipient_phone):
-            st.error(
-                "⚠️ Invalid Ugandan Phone Format! Ensure it starts with `+256` followed by 9 digits (e.g., +256770123456).")
-        elif not recipient_name or not recipient_email:
-            st.error("⚠️ Please ensure Recipient Name and Email are provided.")
-        elif quantity > item_row["Stock Quantity"]:
-            st.error(
-                "❌ Order quantity exceeds available warehouse stock. Please contact support or reduce quantity.")
-        else:
-            st.session_state.inventory_df.loc[
-                st.session_state.inventory_df["Product Name"] == selected_item_name, "Stock Quantity"
-            ] -= quantity
+            category_filter = st.selectbox("Filter Category", [
+                                           "All"] + list(st.session_state.inventory_df["Category"].unique()))
 
-            order_id = f"ORD-{uuid.uuid4().hex[:4].upper()}"
+            if category_filter != "All":
+                filtered_inv = st.session_state.inventory_df[
+                    st.session_state.inventory_df["Category"] == category_filter]
+            else:
+                filtered_inv = st.session_state.inventory_df
 
-            new_order = {
-                "OrderID": order_id,
-                "Outlet": selected_outlet_name,
-                "Recipient Name": recipient_name,
-                "Recipient Phone": recipient_phone,
-                "Recipient Email": recipient_email,
-                "Product Name": selected_item_name,
-                "Quantity": quantity,
-                "Total Amount (UGX)": total_price,
-                "Payment Method": payment_method,
-                "Status": "Processing",
-                "Date": str(datetime.date.today()),
-                "Dispatch Time": "Pending",
-                "Delivery Time": "Pending"
-            }
-            st.session_state.orders_df = pd.concat(
-                [pd.DataFrame([new_order]), st.session_state.orders_df], ignore_index=True)
+            selected_item_name = st.selectbox(
+                "Select Product", filtered_inv["Product Name"].tolist())
+            item_row = st.session_state.inventory_df[st.session_state.inventory_df["Product Name"]
+                                                     == selected_item_name].iloc[0]
 
-            if payment_method == "Trade Credit Line":
-                st.session_state.outlets_df.loc[
-                    st.session_state.outlets_df[
-                        "Business Name"] == selected_outlet_name, "Used Credit (UGX)"
-                ] += total_price
+            if user_role == "Staff / Admin":
+                st.info(
+                    f"📋 **Batch No:** `{item_row['Batch Number']}` | **Expiry:** `{item_row['Expiry Date']}` | **NDA Reg:** `{item_row['NDA Reg No']}` | **Stock:** `{item_row['Stock Quantity']}` units")
+            else:
+                if item_row["Stock Quantity"] > 0:
+                    st.success(
+                        "✅ **Availability:** In Stock (Ready for Dispatch)")
+                else:
+                    st.error("❌ **Availability:** Out of Stock")
 
-            st.success(
-                f"✅ Order **{order_id}** successfully recorded! Delivery alerts routed to **{recipient_name} ({recipient_phone})**.")
+            quantity = st.number_input(
+                "Quantity (Boxes)", min_value=1, value=5)
+
+            discount = 0.0
+            if quantity >= 50:
+                discount = 0.10
+                st.caption("🎉 10% Bulk Volume Discount Applied!")
+            elif quantity >= 10:
+                discount = 0.05
+                st.caption("🎉 5% Tiered Volume Discount Applied!")
+
+            base_price = quantity * item_row["Unit Price (UGX)"]
+            total_price = base_price * (1 - discount)
+
+        with col_b:
+            st.subheader("2. Delivery Recipient Details")
+            st.caption("Auto-filled from your registered account profile:")
+
+            recipient_name = st.text_input(
+                "Recipient Full Name", value=user_info["contact_name"])
+            recipient_phone = st.text_input(
+                "Recipient WhatsApp Number (+256...)", value=user_info["phone"])
+            recipient_email = st.text_input(
+                "Recipient Email Address", value=st.session_state.current_user)
+
+        st.divider()
+
+        col_price, col_pay = st.columns([1, 2])
+        with col_price:
+            st.metric("Total Payable Amount", f"UGX {total_price:,.0f}",
+                      delta=f"-UGX {base_price - total_price:,.0f}" if discount > 0 else None)
+
+        with col_pay:
+            payment_method = st.radio(
+                "Payment Method",
+                ["MTN Mobile Money", "Airtel Money",
+                    "Trade Credit Line", "Bank Wire Transfer"],
+                horizontal=True
+            )
+
+        if st.button("🚀 Confirm Order & Register Recipient", type="primary", use_container_width=True):
+            if not validate_uganda_phone(recipient_phone):
+                st.error(
+                    "⚠️ Invalid Ugandan Phone Format! Ensure it starts with `+256` followed by 9 digits.")
+            elif quantity > item_row["Stock Quantity"]:
+                st.error(
+                    "❌ Order quantity exceeds available warehouse stock. Please contact support or reduce quantity.")
+            else:
+                st.session_state.inventory_df.loc[
+                    st.session_state.inventory_df["Product Name"] == selected_item_name, "Stock Quantity"
+                ] -= quantity
+
+                order_id = f"ORD-{uuid.uuid4().hex[:4].upper()}"
+
+                new_order = {
+                    "OrderID": order_id,
+                    "Outlet": user_info["business_name"],
+                    "Recipient Name": recipient_name,
+                    "Recipient Phone": recipient_phone,
+                    "Recipient Email": recipient_email,
+                    "Product Name": selected_item_name,
+                    "Quantity": quantity,
+                    "Total Amount (UGX)": total_price,
+                    "Payment Method": payment_method,
+                    "Status": "Processing",
+                    "Date": str(datetime.date.today()),
+                    "Dispatch Time": "Pending",
+                    "Delivery Time": "Pending"
+                }
+                st.session_state.orders_df = pd.concat(
+                    [pd.DataFrame([new_order]), st.session_state.orders_df], ignore_index=True)
+
+                if payment_method == "Trade Credit Line":
+                    st.session_state.outlets_df.loc[
+                        st.session_state.outlets_df["Business Name"] == user_info[
+                            "business_name"], "Used Credit (UGX)"
+                    ] += total_price
+
+                st.success(
+                    f"✅ Order **{order_id}** successfully recorded! Delivery alerts routed to **{recipient_name} ({recipient_phone})**.")
 
 # CHOICE: DELIVERY NOTIFICATIONS
 elif choice == "🔔 Delivery Notifications":
@@ -613,7 +717,6 @@ elif choice == "📦 Inventory Management":
     st.caption(
         "Use inline editing to update live inventory stock counts, unit pricing, or batch details.")
 
-    # Low Stock Alerts Banner
     low_stock = st.session_state.inventory_df[st.session_state.inventory_df["Stock Quantity"] < 200]
     if not low_stock.empty:
         for _, row in low_stock.iterrows():
