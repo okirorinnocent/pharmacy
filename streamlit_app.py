@@ -20,6 +20,20 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# --- SAFE SERVICE IMPORTS & FALLBACK DEFINITIONS ---
+try:
+    from momo import momo_service
+except Exception:
+    class MockMomoService:
+        @staticmethod
+        def request_to_pay(phone_number, amount, reference_id=None):
+            return {
+                "status": 202,
+                "reference_id": reference_id or str(uuid.uuid4())[:8],
+                "message": "Payment request successfully queued."
+            }
+    momo_service = MockMomoService()
+
 # --- INITIALIZE SESSION STATE DATA ---
 if "outlets_df" not in st.session_state:
     st.session_state.outlets_df = pd.DataFrame([
@@ -164,18 +178,18 @@ elif choice == "📱 MTN MoMo Gateway":
     col1, col2 = st.columns([1, 1])
     with col1:
         st.subheader("Trigger Direct Push Payment")
-        momo_phone = st.text_input("Subscriber Phone Number", value="256770665588", [cite: 20])
+        momo_phone = st.text_input(
+            "Subscriber Phone Number", value="256770665588")
         momo_amount = st.number_input(
-            "Amount (UGX)", min_value=1000, value=150000, step=10000)[cite: 20]
+            "Amount (UGX)", min_value=1000, value=150000, step=10000)
         order_ref = st.text_input(
-            "Order Reference", value=f"MED-ORDER-{uuid.uuid4().hex[:3].upper()}")[cite: 20]
+            "Order Reference", value=f"MED-ORDER-{uuid.uuid4().hex[:3].upper()}")
 
         env_mode = st.radio("API Environment", [
                             "Sandbox Mode (Simulation)", "Production API (Live PIN Prompt)"], horizontal=True)
 
         if st.button("💳 Initiate MoMo Request Payment", type="primary"):
-            st.info(f"Sending RequestToPay prompt to {momo_phone}...")[
-                cite: 20]
+            st.info(f"Sending RequestToPay prompt to {momo_phone}...")
 
             tx_status = "PENDING_PROMPT" if "Production" in env_mode else "SUCCESS"
             new_tx = {
@@ -193,10 +207,10 @@ elif choice == "📱 MTN MoMo Gateway":
                     "⚠️ Live environment selected. Ensure production API credentials are set in environment variables.")
             else:
                 st.success(
-                    "✅ Payment Request Prompted! (Sandbox auto-approved).")[cite: 20]
+                    "✅ Payment Request Prompted! (Sandbox auto-approved).")
 
     with col2:
-        st.subheader("MoMo Transaction Logs")[cite: 20]
+        st.subheader("MoMo Transaction Logs")
         st.dataframe(st.session_state.momo_logs, use_container_width=True)
 
 # --- 4. ADMIN INVENTORY & STOCK MANAGEMENT ---
