@@ -6,29 +6,31 @@ import pandas as pd
 import sys
 from pathlib import Path
 
-# 1. ALWAYS modify sys.path BEFORE importing local project modules
+# 1. MUST BE FIRST: Insert the root folder into Python's module lookup path
 root_path = Path(__file__).resolve().parent
 if str(root_path) not in sys.path:
     sys.path.insert(0, str(root_path))
 
-# 2. Standard third-party library imports
+# 2. Standard and Third-Party Imports
 
-# 3. Local application imports (after sys.path update)
+# 3. Local Application Imports (now safe because sys.path is updated)
 
-# --- STREAMLIT DASHBOARD PAGE CONFIGURATION ---
+# --- PAGE CONFIGURATION ---
 st.set_page_config(
     page_title="MedSupply Uganda Dashboard",
     page_icon="🏥",
     layout="wide"
 )
 
-# Initialize Supabase Sync Client for Streamlit
+# Initialize Supabase Client
 supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
 
 st.title("🏥 MedSupply Uganda — Operations Dashboard")
 
 menu = ["Overview", "Drug Outlets & Credit", "Inventory Management", "Orders"]
 choice = st.sidebar.selectbox("Navigation", menu)
+
+# --- NAVIGATION ROUTING ---
 
 if choice == "Overview":
     st.header("System Overview")
@@ -73,7 +75,6 @@ elif choice == "Drug Outlets & Credit":
             )
             st.success(f"Calculated Credit Limit: UGX {limit:,.0f}")
 
-            # Direct action button for updating the credit limit in Supabase
             if st.button("Save Limit to Database"):
                 supabase.table("drug_outlets").update(
                     {"credit_limit_ugx": limit}
