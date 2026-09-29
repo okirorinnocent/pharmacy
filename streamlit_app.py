@@ -1,8 +1,16 @@
-import streamlit as st
-import pandas as pd
-from supabase import create_client
-from app.config import settings
 from app.services.credit_engine import credit_engine
+from app.config import settings
+from supabase import create_client
+import pandas as pd
+import streamlit as st
+import sys
+from pathlib import Path
+
+# Add project root directory to Python path
+sys.path.append(str(Path(__file__).resolve().parent))
+
+
+# Rest of your streamlit code below...
 
 st.set_page_config(page_title="MedSupply Uganda Dashboard", layout="wide")
 
