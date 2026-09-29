@@ -20,55 +20,41 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- SAFE SERVICE IMPORTS & FALLBACK DEFINITIONS ---
-try:
-    from momo import momo_service
-except Exception:
-    class MockMomoService:
-        @staticmethod
-        def request_to_pay(phone_number, amount, reference_id=None):
-            return {
-                "status": 202,
-                "reference_id": reference_id or str(uuid.uuid4())[:8],
-                "message": "Payment request successfully queued in Sandbox."
-            }
-    momo_service = MockMomoService()
-
-# Safe Supabase Loading
-try:
-    from supabase import create_client
-    from config import settings
-    supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
-except Exception:
-    supabase = None
-
-# --- INITIALIZE SESSION STATE DATA (PREVENTS EMPTY TABLES) ---
+# --- INITIALIZE SESSION STATE DATA ---
 if "outlets_df" not in st.session_state:
     st.session_state.outlets_df = pd.DataFrame([
         {"ID": "OUT-101", "Business Name": "Kampala Care Pharmacy", "Phone": "256771234567",
-            "Location": "Kampala Central", "Credit Limit (UGX)": "5,000,000", "Status": "Active"},
+            "Location": "Kampala Central", "Credit Limit (UGX)": 5000000, "Status": "Active"},
         {"ID": "OUT-102", "Business Name": "Mbarara Express Clinic", "Phone": "256788990011",
-            "Location": "Mbarara Town", "Credit Limit (UGX)": "2,500,000", "Status": "Active"},
+            "Location": "Mbarara Town", "Credit Limit (UGX)": 2500000, "Status": "Active"},
         {"ID": "OUT-103", "Business Name": "Jinja Life Pharma", "Phone": "256775001122",
-            "Location": "Jinja Main St", "Credit Limit (UGX)": "1,000,000", "Status": "Review"}
+            "Location": "Jinja Main St", "Credit Limit (UGX)": 1000000, "Status": "Review"}
     ])
 
 if "inventory_df" not in st.session_state:
     st.session_state.inventory_df = pd.DataFrame([
         {"Item ID": "INV-001", "Product Name": "Amoxicillin 500mg (Box of 100)",
-         "Unit Price (UGX)": 35000, "In Stock": 450, "Category": "Antibiotics"},
+         "Unit Price (UGX)": 35000, "Stock Quantity": 450, "Category": "Antibiotics"},
         {"Item ID": "INV-002", "Product Name": "Paracetamol 500mg (Box of 100)",
-         "Unit Price (UGX)": 12000, "In Stock": 1200, "Category": "Analgesics"},
+         "Unit Price (UGX)": 12000, "Stock Quantity": 1200, "Category": "Analgesics"},
         {"Item ID": "INV-003", "Product Name": "Coartem 20/120 (Box of 30)",
-         "Unit Price (UGX)": 85000, "In Stock": 180, "Category": "Antimalarial"}
+         "Unit Price (UGX)": 85000, "Stock Quantity": 180, "Category": "Antimalarial"}
     ])
 
 if "orders_df" not in st.session_state:
     st.session_state.orders_df = pd.DataFrame([
         {"OrderID": "ORD-9901", "Outlet": "Kampala Care Pharmacy",
-            "Total Amount (UGX)": "175,000", "Payment Method": "MTN MoMo", "Status": "Completed", "Date": "2026-09-28"},
+            "Total Amount (UGX)": 175000, "Payment Method": "MTN MoMo", "Status": "Completed", "Date": "2026-09-28"},
         {"OrderID": "ORD-9902", "Outlet": "Mbarara Express Clinic",
-            "Total Amount (UGX)": "425,000", "Payment Method": "Trade Credit", "Status": "Approved", "Date": "2026-09-29"}
+            "Total Amount (UGX)": 425000, "Payment Method": "Trade Credit", "Status": "Approved", "Date": "2026-09-29"}
+    ])
+
+if "momo_logs" not in st.session_state:
+    st.session_state.momo_logs = pd.DataFrame([
+        {"TxID": "tx-9901", "Phone": "256771234567",
+            "Amount (UGX)": 175000, "Reference": "MED-ORDER-880", "Status": "SUCCESS"},
+        {"TxID": "tx-9902", "Phone": "256788990011",
+            "Amount (UGX)": 425000, "Reference": "MED-ORDER-881", "Status": "SUCCESS"}
     ])
 
 if "chat_history" not in st.session_state:
@@ -87,9 +73,9 @@ with st.sidebar:
         "🛒 Place New Order",
         "💬 WhatsApp Bot Sandbox",
         "📱 MTN MoMo Gateway",
+        "📦 Inventory & Admin Stock",
         "🏥 Drug Outlets & Credit",
-        "📦 Stock Inventory",
-        "📋 Order History"
+        "📋 Master Order Logs"
     ]
     choice = st.selectbox("Navigation Menu", menu)
 
@@ -123,9 +109,9 @@ if choice == "🛒 Place New Order":
         new_order = {
             "OrderID": f"ORD-{uuid.uuid4().hex[:4].upper()}",
             "Outlet": selected_outlet,
-            "Total Amount (UGX)": f"{total_price:,.0f}",
+            "Total Amount (UGX)": total_price,
             "Payment Method": payment_method,
-            "Status": "Processing",
+            "Status": "Approved" if payment_method == "Trade Credit Line" else "Pending Payment",
             "Date": str(datetime.date.today())
         }
         st.session_state.orders_df = pd.concat(
@@ -153,12 +139,13 @@ elif choice == "💬 WhatsApp Bot Sandbox":
             st.session_state.chat_history.append(
                 {"role": "user", "msg": user_input})
 
-            # Dynamic Intent Engine
             msg_lower = user_input.strip().lower()
             if "1" in msg_lower or "catalog" in msg_lower:
-                bot_reply = "📦 **Available Stock Catalog:**\n1. Amoxicillin 500mg - UGX 35,000/box\n2. Paracetamol 500mg - UGX 12,000/box\n3. Coartem 20/120 - UGX 85,000/box"
+                items_str = "\n".join(
+                    [f"{row['Product Name']} - UGX {row['Unit Price (UGX)']:,.0f}" for _, row in st.session_state.inventory_df.iterrows()])
+                bot_reply = f"📦 **Available Stock Catalog:**\n{items_str}"
             elif "2" in msg_lower or "order" in msg_lower:
-                bot_reply = "🛒 **Order Request Initiated!**\nReply with the item name and quantity you need."
+                bot_reply = "🛒 **Order Request Initiated!**\nReply with the item name and quantity you need (e.g., *Amoxicillin 10 boxes*)."
             elif "3" in msg_lower or "credit" in msg_lower:
                 bot_reply = "💳 **Micro-Credit Line Status:**\nApproved Limit: **UGX 5,000,000**\nAvailable Balance: **UGX 3,500,000**"
             elif "manager" in msg_lower or "support" in msg_lower or "reach" in msg_lower:
@@ -176,43 +163,125 @@ elif choice == "📱 MTN MoMo Gateway":
 
     col1, col2 = st.columns([1, 1])
     with col1:
-        momo_phone = st.text_input(
-            "Subscriber Phone Number", value="256770665588")
+        st.subheader("Trigger Direct Push Payment")
+        momo_phone = st.text_input("Subscriber Phone Number", value="256770665588", [cite: 20])
         momo_amount = st.number_input(
-            "Amount (UGX)", min_value=1000, value=150000)
-        order_ref = st.text_input("Order Reference", value="MED-ORDER-882")
+            "Amount (UGX)", min_value=1000, value=150000, step=10000)[cite: 20]
+        order_ref = st.text_input(
+            "Order Reference", value=f"MED-ORDER-{uuid.uuid4().hex[:3].upper()}")[cite: 20]
+
+        env_mode = st.radio("API Environment", [
+                            "Sandbox Mode (Simulation)", "Production API (Live PIN Prompt)"], horizontal=True)
 
         if st.button("💳 Initiate MoMo Request Payment", type="primary"):
-            if hasattr(momo_service, 'request_to_pay'):
-                res = momo_service.request_to_pay(
-                    momo_phone, momo_amount, order_ref)
-                st.info(f"Sending RequestToPay prompt to {momo_phone}...")
-                st.success("✅ Payment Request Prompted!")
+            st.info(f"Sending RequestToPay prompt to {momo_phone}...")[
+                cite: 20]
+
+            tx_status = "PENDING_PROMPT" if "Production" in env_mode else "SUCCESS"
+            new_tx = {
+                "TxID": f"tx-{uuid.uuid4().hex[:4]}",
+                "Phone": momo_phone,
+                "Amount (UGX)": momo_amount,
+                "Reference": order_ref,
+                "Status": tx_status
+            }
+            st.session_state.momo_logs = pd.concat(
+                [pd.DataFrame([new_tx]), st.session_state.momo_logs], ignore_index=True)
+
+            if "Production" in env_mode:
+                st.warning(
+                    "⚠️ Live environment selected. Ensure production API credentials are set in environment variables.")
             else:
-                st.error("MoMo Service initialisation error.")
+                st.success(
+                    "✅ Payment Request Prompted! (Sandbox auto-approved).")[cite: 20]
 
     with col2:
-        st.subheader("MoMo Transaction Logs")
-        st.dataframe(pd.DataFrame([
-            {"TxID": "tx-9901", "Phone": "256771234567",
-                "Amount": "175,000 UGX", "Status": "SUCCESS"},
-            {"TxID": "tx-9902", "Phone": "256788990011",
-                "Amount": "425,000 UGX", "Status": "SUCCESS"},
-            {"TxID": "tx-9903", "Phone": "256775001122",
-                "Amount": "85,000 UGX", "Status": "PENDING"}
-        ]), use_container_width=True)
+        st.subheader("MoMo Transaction Logs")[cite: 20]
+        st.dataframe(st.session_state.momo_logs, use_container_width=True)
 
-# --- 4. DRUG OUTLETS & CREDIT ---
+# --- 4. ADMIN INVENTORY & STOCK MANAGEMENT ---
+elif choice == "📦 Inventory & Admin Stock":
+    st.header("📦 Warehouse Stock Inventory & Admin Management")
+
+    tab1, tab2 = st.tabs(["📋 Current Stock View", "➕ Add / Restock Inventory"])
+
+    with tab1:
+        st.dataframe(st.session_state.inventory_df, use_container_width=True)
+
+    with tab2:
+        st.subheader("Add New Pharmaceutical Product")
+        with st.form("add_stock_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                item_name = st.text_input(
+                    "Product Name & Unit Size", placeholder="e.g. Ciprofloxacin 500mg")
+                category = st.selectbox(
+                    "Category", ["Antibiotics", "Analgesics", "Antimalarial", "Vitamins", "Supplies"])
+            with col2:
+                unit_price = st.number_input(
+                    "Unit Price (UGX)", min_value=500, value=25000, step=1000)
+                quantity = st.number_input(
+                    "Initial Stock Quantity", min_value=1, value=100)
+
+            submit_stock = st.form_submit_button(
+                "📦 Add Item to Inventory", type="primary")
+
+            if submit_stock and item_name:
+                new_item = {
+                    "Item ID": f"INV-00{len(st.session_state.inventory_df) + 1}",
+                    "Product Name": item_name,
+                    "Unit Price (UGX)": unit_price,
+                    "Stock Quantity": quantity,
+                    "Category": category
+                }
+                st.session_state.inventory_df = pd.concat(
+                    [pd.DataFrame([new_item]), st.session_state.inventory_df], ignore_index=True)
+                st.success(f"Added '{item_name}' to inventory!")
+                st.rerun()
+
+# --- 5. DRUG OUTLETS & CREDIT ONBOARDING ---
 elif choice == "🏥 Drug Outlets & Credit":
     st.header("🏥 Drug Outlets & Micro-Credit Eligibility")
-    st.dataframe(st.session_state.outlets_df, use_container_width=True)
 
-# --- 5. STOCK INVENTORY ---
-elif choice == "📦 Stock Inventory":
-    st.header("📦 Warehouse Stock Inventory")
-    st.dataframe(st.session_state.inventory_df, use_container_width=True)
+    tab1, tab2 = st.tabs(["🏥 Registered Outlets", "➕ Onboard New Outlet"])
 
-# --- 6. ORDER HISTORY ---
-elif choice == "📋 Order History":
-    st.header("📋 Master Order Logs")
+    with tab1:
+        st.dataframe(st.session_state.outlets_df, use_container_width=True)
+
+    with tab2:
+        st.subheader("Register New Pharmacy / Drug Outlet")
+        with st.form("onboard_outlet_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                outlet_name = st.text_input(
+                    "Business Name", placeholder="e.g. Mbale Health Pharma")
+                phone = st.text_input(
+                    "Phone Number", placeholder="256770000000")
+            with col2:
+                location = st.text_input(
+                    "Location / District", placeholder="e.g. Mbale Central")
+                credit_limit = st.number_input(
+                    "Assigned Credit Limit (UGX)", min_value=0, value=2000000, step=500000)
+
+            submit_outlet = st.form_submit_button(
+                "🏥 Onboard Outlet", type="primary")
+
+            if submit_outlet and outlet_name:
+                new_outlet = {
+                    "ID": f"OUT-10{len(st.session_state.outlets_df) + 1}",
+                    "Business Name": outlet_name,
+                    "Phone": phone,
+                    "Location": location,
+                    "Credit Limit (UGX)": credit_limit,
+                    "Status": "Active"
+                }
+                st.session_state.outlets_df = pd.concat(
+                    [pd.DataFrame([new_outlet]), st.session_state.outlets_df], ignore_index=True)
+                st.success(
+                    f"Registered outlet '{outlet_name}' with UGX {credit_limit:,.0f} credit line!")
+                st.rerun()
+
+# --- 6. MASTER ORDER LOGS ---
+elif choice == "📋 Master Order Logs":
+    st.header("📋 Master Order Logs & Tracking")
     st.dataframe(st.session_state.orders_df, use_container_width=True)
