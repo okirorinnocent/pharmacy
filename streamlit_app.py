@@ -183,9 +183,12 @@ def get_global_database():
             "Recipient Phone": "+256771234567",
             "Recipient Email": "sarah@carepharma.com",
             "Product Name": "Amoxicillin 500mg (Box of 100)",
+            "Batch Number": "AMX-2026-09A",
             "Quantity": 5,
             "Total Amount (UGX)": 175000,
             "Payment Method": "MTN Mobile Money",
+            "Payment Status": "Paid on Delivery",
+            "Item Verified": "Verified Correct",
             "Status": "Delivered",
             "Date": "2026-09-28",
             "Dispatch Time": "2026-09-28 09:30 AM",
@@ -198,9 +201,12 @@ def get_global_database():
             "Recipient Phone": "+256788990011",
             "Recipient Email": "john@mbararaclinic.com",
             "Product Name": "Coartem 20/120 (Box of 30)",
+            "Batch Number": "CRT-2026-11B",
             "Quantity": 5,
             "Total Amount (UGX)": 425000,
             "Payment Method": "Trade Credit Line",
+            "Payment Status": "Pending Payment",
+            "Item Verified": "Pending Inspection",
             "Status": "Dispatched",
             "Date": "2026-09-29",
             "Dispatch Time": "2026-09-29 11:00 AM",
@@ -245,7 +251,7 @@ with st.sidebar:
     st.caption("B2B Digital Pharma Platform")
     st.divider()
 
-    # User Account Status Indicator (Safeguarded against KeyError)
+    # User Account Status Indicator
     if st.session_state.current_user and st.session_state.current_user in db["users"]:
         user_info = db["users"][st.session_state.current_user]
         st.success(
@@ -254,12 +260,12 @@ with st.sidebar:
             st.session_state.current_user = None
             st.rerun()
     else:
-        st.session_state.current_user = None  # Reset invalid session
+        st.session_state.current_user = None
         st.warning("🔒 **Not Logged In**\nSign up or log in to place orders.")
 
     st.divider()
 
-    # Determine user role safely
+    # Determine user role
     user_role = "Guest"
     if st.session_state.current_user and st.session_state.current_user in db["users"]:
         user_role = db["users"][st.session_state.current_user]["role"]
@@ -373,7 +379,6 @@ if choice == "🔐 Account Portal":
             else:
                 assigned_role = "Staff / Admin" if new_email == "okirorinnocent49@gmail.com" else "Customer / Buyer"
 
-                # Save account across shared state
                 db["users"][new_email] = {
                     "password": new_pass,
                     "business_name": new_biz,
@@ -480,7 +485,7 @@ elif choice == "🛒 Place New Order":
             payment_method = st.radio(
                 "Payment Method",
                 ["MTN Mobile Money", "Airtel Money",
-                    "Trade Credit Line", "Bank Wire Transfer"],
+                    "Trade Credit Line", "Cash on Delivery"],
                 horizontal=True
             )
 
@@ -491,7 +496,6 @@ elif choice == "🛒 Place New Order":
             elif quantity > item_row["Stock Quantity"]:
                 st.error("❌ Order quantity exceeds available warehouse stock.")
             else:
-                # Deduct stock in global shared memory
                 db["inventory"].loc[
                     db["inventory"]["Product Name"] == selected_item_name, "Stock Quantity"
                 ] -= quantity
@@ -505,16 +509,18 @@ elif choice == "🛒 Place New Order":
                     "Recipient Phone": recipient_phone,
                     "Recipient Email": recipient_email,
                     "Product Name": selected_item_name,
+                    "Batch Number": item_row["Batch Number"],
                     "Quantity": quantity,
                     "Total Amount (UGX)": total_price,
                     "Payment Method": payment_method,
+                    "Payment Status": "Pending Payment",
+                    "Item Verified": "Pending Inspection",
                     "Status": "Processing",
                     "Date": str(datetime.date.today()),
                     "Dispatch Time": "Pending",
                     "Delivery Time": "Pending"
                 }
 
-                # Push order to global shared state so ALL users see it immediately
                 db["orders"] = pd.concat(
                     [pd.DataFrame([new_order]), db["orders"]], ignore_index=True)
 
@@ -536,13 +542,15 @@ elif choice == "🔔 Delivery Notifications":
                                     ["Status"].isin(["Arrived", "Delivered"])]
 
     if not delivered_orders.empty:
-        for _, order in delivered_orders.iterrows():
+        for idx, order in delivered_orders.iterrows():
             st.markdown(f"""
                 <div class="notification-card">
                     <h4>🎉 DELIVERY CONFIRMED | Order {order['OrderID']}</h4>
                     <p><b>Facility Outlet:</b> {order['Outlet']} | <b>Line Item:</b> {order['Product Name']} ({order['Quantity']} Boxes)</p>
+                    <p><b>Batch Verification:</b> `{order['Batch Number']}` | <b>Item Accuracy:</b> {order['Item Verified']}</p>
                     <p><b>Recipient:</b> {order['Recipient Name']} ({order['Recipient Phone']} / {order['Recipient Email']})</p>
-                    <p><b>Status:</b> <span class="status-badge status-delivered">DELIVERED</span> | <b>Time:</b> {order['Delivery Time']}</p>
+                    <p><b>Payment Status:</b> {order['Payment Status']} ({order['Payment Method']})</p>
+                    <p><b>Status:</b> <span class="status-badge status-delivered">DELIVERED</span> | <b>Exact Timestamp:</b> {order['Delivery Time']}</p>
                 </div>
             """, unsafe_allow_html=True)
 
@@ -552,9 +560,14 @@ elif choice == "🔔 Delivery Notifications":
                     st.info(
                         f"Downloading electronic Proof of Delivery for {order['OrderID']}...")
             with c2:
-                if st.button(f"✅ Confirm Receipt", key=f"conf_{order['OrderID']}"):
+                if st.button(f"✅ Confirm Item & Paid", key=f"conf_{order['OrderID']}"):
+                    real_idx = db["orders"][db["orders"]
+                                            ["OrderID"] == order["OrderID"]].index[0]
+                    db["orders"].at[real_idx, "Payment Status"] = "Paid on Delivery"
+                    db["orders"].at[real_idx, "Item Verified"] = "Verified Correct"
                     st.success(
-                        "Delivery receipt acknowledged by facility manager!")
+                        "Delivery, Item Accuracy, and Payment Confirmed!")
+                    st.rerun()
             with c3:
                 if st.button(f"⚠️ Report Issue", key=f"rep_{order['OrderID']}"):
                     st.warning("Issue ticket opened with MedSupply Support.")
@@ -578,17 +591,17 @@ elif choice == "🔔 Delivery Notifications":
     df_display = df_display[df_display["Status"].isin(status_filter)]
 
     if user_role == "Customer / Buyer":
-        customer_cols = ["OrderID", "Outlet", "Product Name", "Quantity",
-                         "Total Amount (UGX)", "Payment Method", "Status", "Date"]
+        customer_cols = ["OrderID", "Outlet", "Product Name", "Batch Number", "Quantity",
+                         "Total Amount (UGX)", "Payment Status", "Item Verified", "Status", "Delivery Time"]
         st.dataframe(df_display[customer_cols], use_container_width=True)
     else:
         st.dataframe(df_display, use_container_width=True)
 
-# CHOICE: SELLER CONTROL CENTER (STAFF ONLY) - WITH REALTIME AUTO-REFRESH
+# CHOICE: SELLER CONTROL CENTER (STAFF ONLY) - WITH REALTIME AUTO-REFRESH & DETECTION
 elif choice == "🚚 Seller Control Center":
     st.header("🚚 Seller Dashboard: Dispatch & Delivery Trigger")
     st.caption(
-        "Manage B2B order fulfillments in real time. (Auto-refreshes every 5 seconds)")
+        "Manage B2B order fulfillments, track payments on delivery, and detect correct items in real time.")
 
     @st.fragment(run_every=5)
     def render_live_seller_dashboard():
@@ -611,29 +624,45 @@ elif choice == "🚚 Seller Control Center":
                 col1.write(
                     f"👤 **Recipient:** {row['Recipient Name']}\n📞 {row['Recipient Phone']}")
                 col2.write(
-                    f"📦 **Item:** {row['Product Name']}\n💰 **Total:** UGX {row['Total Amount (UGX)']:,.0f}")
+                    f"📦 **Item:** {row['Product Name']} ({row['Quantity']} Boxes)\n🏷️ **Batch:** `{row['Batch Number']}`\n💰 **Total:** UGX {row['Total Amount (UGX)']:,.0f}")
                 col3.write(
-                    f"Status: **{row['Status']}**\nDispatch Time: *{row['Dispatch Time']}*")
+                    f"Status: **{row['Status']}**\nPayment: **{row['Payment Status']}**\nItem Detection: **{row['Item Verified']}**\nTimestamp: *{row['Delivery Time']}*")
 
                 if row["Status"] != "Delivered":
                     st.file_uploader(f"Upload POD Image ({row['OrderID']})", type=[
                                      "png", "jpg", "pdf"], key=f"file_{row['OrderID']}")
 
-                    if st.button(f"🚚 Trigger Delivered", key=f"deliv_btn_{row['OrderID']}", type="primary"):
-                        now_str = datetime.datetime.now().strftime("%Y-%m-%d %I:%M %p")
+                    col_btn1, col_btn2 = st.columns(2)
+                    with col_btn1:
+                        if st.button(f"🚚 Trigger Delivered & Paid", key=f"deliv_btn_{row['OrderID']}", type="primary"):
+                            # Accurately generate the current local delivery timestamp
+                            exact_time_now = datetime.datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
 
-                        # Update global database
-                        real_idx = db["orders"][db["orders"]
-                                                ["OrderID"] == row["OrderID"]].index[0]
-                        db["orders"].at[real_idx, "Status"] = "Delivered"
-                        db["orders"].at[real_idx, "Delivery Time"] = now_str
+                            real_idx = db["orders"][db["orders"]
+                                                    ["OrderID"] == row["OrderID"]].index[0]
+                            db["orders"].at[real_idx, "Status"] = "Delivered"
+                            db["orders"].at[real_idx,
+                                            "Delivery Time"] = exact_time_now
+                            db["orders"].at[real_idx,
+                                            "Payment Status"] = "Paid on Delivery"
+                            db["orders"].at[real_idx,
+                                            "Item Verified"] = "Verified Correct Item"
 
-                        st.success(
-                            f"Delivery triggered and dispatched to {row['Recipient Name']} ({row['Recipient Phone']}) at {now_str}!")
-                        st.rerun()
+                            st.success(
+                                f"Delivery & Payment confirmed for {row['Recipient Name']} at {exact_time_now}!")
+                            st.rerun()
+                    with col_btn2:
+                        if st.button(f"❌ Detect Mismatch Item", key=f"mismatch_{row['OrderID']}"):
+                            real_idx = db["orders"][db["orders"]
+                                                    ["OrderID"] == row["OrderID"]].index[0]
+                            db["orders"].at[real_idx,
+                                            "Item Verified"] = "⚠️ Wrong Item Flagged"
+                            st.error(
+                                f"Mismatch flagged for Order {row['OrderID']}!")
+                            st.rerun()
                 else:
                     st.write(
-                        f"✅ **Delivery Confirmed at {row['Delivery Time']}**")
+                        f"✅ **Delivery Confirmed at {row['Delivery Time']}** | **Payment: {row['Payment Status']}** | **Detection: {row['Item Verified']}**")
                 st.divider()
 
     render_live_seller_dashboard()
