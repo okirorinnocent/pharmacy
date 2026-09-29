@@ -2,30 +2,39 @@ import streamlit as st
 import pandas as pd
 import uuid
 import datetime
+import re
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
     page_title="MedSupply Uganda | B2B Pharma Platform",
     page_icon="💊",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="auto"
 )
 
-# --- MODERN STYLING & COMPETITIVE UI COLOR SCHEME ---
+# --- MODERN STYLING & HIGH-CONTRAST THEME ---
 st.markdown("""
     <style>
-    /* Global Competitive Background Theme */
+    /* Global Background Theme */
     .stApp {
         background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
         font-family: 'Inter', system-ui, -apple-system, sans-serif;
         color: #F8FAFC;
     }
     
-    /* Dynamic WhatsApp Chat Styling */
+    /* Responsive Content Container Padding to Prevent Sidebar Collision */
+    .main .block-container {
+        padding-top: 2rem;
+        padding-bottom: 3rem;
+        padding-left: 2.5rem;
+        padding-right: 2.5rem;
+    }
+    
+    /* WhatsApp Chat Styling */
     .chat-bubble-user {
-        background: #059669;
+        background-color: #059669;
         padding: 12px 16px;
-        border-radius: 16px 16px 0px 16px;
+        border-radius: 16px 16px 2px 16px;
         max-width: 75%;
         float: right;
         margin: 8px 0;
@@ -34,28 +43,60 @@ st.markdown("""
         box-shadow: 0 2px 4px rgba(0,0,0,0.2);
     }
     .chat-bubble-bot {
-        background: #334155;
+        background-color: #1E293B;
         padding: 14px 18px;
-        border-radius: 16px 16px 16px 0px;
+        border-radius: 16px 16px 16px 2px;
         max-width: 80%;
         float: left;
         margin: 8px 0;
-        border: 1px solid #475569;
+        border: 1px solid #334155;
         font-size: 0.95rem;
         color: #F8FAFC;
         box-shadow: 0 2px 4px rgba(0,0,0,0.2);
         line-height: 1.5;
     }
+    .chat-time {
+        font-size: 0.7rem;
+        color: #94A3B8;
+        margin-top: 4px;
+        display: block;
+    }
     
-    /* Dynamic Delivery Notification Banners */
+    /* High-Contrast Notification Cards */
     .notification-card {
         padding: 1.25rem;
         border-radius: 12px;
         background-color: #064E3B;
         border-left: 6px solid #10B981;
         margin-bottom: 1.2rem;
-        color: #ECFDF5;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+        color: #FFFFFF;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+    }
+    .notification-card h4 {
+        color: #34D399;
+        margin-bottom: 0.5rem;
+    }
+    
+    /* Status Badges */
+    .status-badge {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    .status-delivered { background-color: #059669; color: #FFFFFF; }
+    .status-dispatched { background-color: #D97706; color: #FFFFFF; }
+    .status-processing { background-color: #2563EB; color: #FFFFFF; }
+    
+    /* Metric Cards */
+    .kpi-card {
+        background-color: #1E293B;
+        border: 1px solid #334155;
+        border-radius: 10px;
+        padding: 15px;
+        text-align: center;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -63,42 +104,114 @@ st.markdown("""
 # --- INITIALIZE SESSION STATE DATA ---
 if "outlets_df" not in st.session_state:
     st.session_state.outlets_df = pd.DataFrame([
-        {"ID": "OUT-101", "Business Name": "Kampala Care Pharmacy", "Phone": "256771234567",
-         "Location": "Kampala Central", "Credit Limit (UGX)": 5000000, "Used Credit (UGX)": 1500000, "Status": "Active"},
-        {"ID": "OUT-102", "Business Name": "Mbarara Express Clinic", "Phone": "256788990011",
-         "Location": "Mbarara Town", "Credit Limit (UGX)": 2500000, "Used Credit (UGX)": 425000, "Status": "Active"}
+        {
+            "ID": "OUT-101",
+            "Business Name": "Kampala Care Pharmacy",
+            "Contact Name": "Dr. Sarah",
+            "Phone": "+256771234567",
+            "Email": "sarah@carepharma.com",
+            "Location": "Kampala Central",
+            "Credit Limit (UGX)": 5000000,
+            "Used Credit (UGX)": 1500000,
+            "Status": "Active"
+        },
+        {
+            "ID": "OUT-102",
+            "Business Name": "Mbarara Express Clinic",
+            "Contact Name": "John Doe",
+            "Phone": "+256788990011",
+            "Email": "john@mbararaclinic.com",
+            "Location": "Mbarara Town",
+            "Credit Limit (UGX)": 2500000,
+            "Used Credit (UGX)": 425000,
+            "Status": "Active"
+        }
     ])
 
 if "inventory_df" not in st.session_state:
     st.session_state.inventory_df = pd.DataFrame([
-        {"Item ID": "INV-001", "Product Name": "Amoxicillin 500mg (Box of 100)",
-         "Unit Price (UGX)": 35000, "Stock Quantity": 450, "Category": "Antibiotics"},
-        {"Item ID": "INV-002", "Product Name": "Paracetamol 500mg (Box of 100)",
-         "Unit Price (UGX)": 12000, "Stock Quantity": 1200, "Category": "Analgesics"},
-        {"Item ID": "INV-003", "Product Name": "Coartem 20/120 (Box of 30)",
-         "Unit Price (UGX)": 85000, "Stock Quantity": 180, "Category": "Antimalarial"}
+        {
+            "Item ID": "INV-001",
+            "Product Name": "Amoxicillin 500mg (Box of 100)",
+            "Category": "Antibiotics",
+            "Unit Price (UGX)": 35000,
+            "Stock Quantity": 450,
+            "Batch Number": "AMX-2026-09A",
+            "Expiry Date": "2028-06-30",
+            "NDA Reg No": "NDA/UG/MED-4821"
+        },
+        {
+            "Item ID": "INV-002",
+            "Product Name": "Paracetamol 500mg (Box of 100)",
+            "Category": "Analgesics",
+            "Unit Price (UGX)": 12000,
+            "Stock Quantity": 1200,
+            "Batch Number": "PAR-2026-01C",
+            "Expiry Date": "2027-12-15",
+            "NDA Reg No": "NDA/UG/MED-1029"
+        },
+        {
+            "Item ID": "INV-003",
+            "Product Name": "Coartem 20/120 (Box of 30)",
+            "Category": "Antimalarial",
+            "Unit Price (UGX)": 85000,
+            "Stock Quantity": 180,
+            "Batch Number": "CRT-2026-11B",
+            "Expiry Date": "2027-08-20",
+            "NDA Reg No": "NDA/UG/MED-9930"
+        }
     ])
 
 if "orders_df" not in st.session_state:
     st.session_state.orders_df = pd.DataFrame([
-        {"OrderID": "ORD-9901", "Outlet": "Kampala Care Pharmacy", "Recipient Name": "Dr. Sarah",
-         "Recipient Phone": "256771234567", "Recipient Email": "sarah@carepharma.com",
-         "Total Amount (UGX)": 175000, "Payment Method": "MTN Mobile Money", "Status": "Arrived", "Date": "2026-09-28"},
-        {"OrderID": "ORD-9902", "Outlet": "Mbarara Express Clinic", "Recipient Name": "John Doe",
-         "Recipient Phone": "256788990011", "Recipient Email": "john@mbararaclinic.com",
-         "Total Amount (UGX)": 425000, "Payment Method": "Trade Credit Line", "Status": "Dispatched", "Date": "2026-09-29"}
-    ])
-
-if "momo_logs" not in st.session_state:
-    st.session_state.momo_logs = pd.DataFrame([
-        {"TxID": "tx-9901", "Phone": "256771234567",
-            "Amount (UGX)": 175000, "Reference": "MED-ORDER-880", "Status": "SUCCESS"}
+        {
+            "OrderID": "ORD-9901",
+            "Outlet": "Kampala Care Pharmacy",
+            "Recipient Name": "Dr. Sarah",
+            "Recipient Phone": "+256771234567",
+            "Recipient Email": "sarah@carepharma.com",
+            "Product Name": "Amoxicillin 500mg (Box of 100)",
+            "Quantity": 5,
+            "Total Amount (UGX)": 175000,
+            "Payment Method": "MTN Mobile Money",
+            "Status": "Delivered",
+            "Date": "2026-09-28",
+            "Dispatch Time": "2026-09-28 09:30 AM",
+            "Delivery Time": "2026-09-28 02:15 PM"
+        },
+        {
+            "OrderID": "ORD-9902",
+            "Outlet": "Mbarara Express Clinic",
+            "Recipient Name": "John Doe",
+            "Recipient Phone": "+256788990011",
+            "Recipient Email": "john@mbararaclinic.com",
+            "Product Name": "Coartem 20/120 (Box of 30)",
+            "Quantity": 5,
+            "Total Amount (UGX)": 425000,
+            "Payment Method": "Trade Credit Line",
+            "Status": "Dispatched",
+            "Date": "2026-09-29",
+            "Dispatch Time": "2026-09-29 11:00 AM",
+            "Delivery Time": "Pending"
+        }
     ])
 
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = [
-        {"role": "bot", "msg": "👋 Welcome to **MedSupply Uganda Professional Support**.\n\nHow can I help you today? Type keywords like **CATALOG**, **PRICES**, **MANAGER**, **COMPANY**, or **STATUS**."}
+        {
+            "role": "bot",
+            "msg": "👋 Welcome to **MedSupply Uganda Professional Support**.\n\nHow can I help you today? Click a quick topic below or type your inquiry.",
+            "time": datetime.datetime.now().strftime("%H:%M")
+        }
     ]
+
+# Helper function for Ugandan phone validation
+
+
+def validate_uganda_phone(phone_str):
+    pattern = r"^\+256[0-9]{9}$"
+    return re.match(pattern, phone_str) is not None
+
 
 # --- SIDEBAR NAVIGATION ---
 with st.sidebar:
@@ -108,13 +221,13 @@ with st.sidebar:
     st.divider()
 
     menu = [
-        "🛒 Place New Order & Recipient Info",
-        "🔔 Delivery Notifications & Alerts",
-        "🚚 Seller Delivery Control Center",
-        "💬 WhatsApp Professional Assistant",
-        "📱 MTN MoMo Gateway",
+        "🛒 Place New Order",
+        "🔔 Delivery Notifications",
+        "🚚 Seller Control Center",
+        "💬 WhatsApp Assistant",
+        "📱 Payment Gateways",
         "📦 Inventory Management",
-        "🏥 Drug Outlets & Credit",
+        "🏥 Outlets & Credit Lines",
         "📋 Master Order Logs"
     ]
     choice = st.selectbox("Navigation Menu", menu)
@@ -122,194 +235,407 @@ with st.sidebar:
     unread_count = len(st.session_state.orders_df[st.session_state.orders_df["Status"].isin(
         ["Arrived", "Delivered"])])
     if unread_count > 0:
-        st.info(
-            f"🔔 **{unread_count} Order(s) Delivered!** Check delivery notifications.")
+        st.success(f"🔔 **{unread_count} Order(s) Delivered!**")
 
-# --- 1. PLACE NEW ORDER & RECIPIENT DETAILS ---
-if choice == "🛒 Place New Order & Recipient Info":
-    st.header("🛒 Place Order & Delivery Notification Setup")
+# --- 1. PLACE NEW ORDER ---
+if choice == "🛒 Place New Order":
+    st.header("🛒 Place Order & Notification Setup")
     st.caption(
-        "Provide recipient details to receive instant notification alerts when the seller triggers delivery.")
+        "Configure recipient details to receive instant notification alerts when the seller triggers delivery.")
 
-    col_a, col_b = st.columns(2)
+    col_a, col_b = st.columns(2, gap="medium")
+
     with col_a:
         st.subheader("1. Order & Product Selection")
-        selected_outlet = st.selectbox(
-            "Select Registered Outlet", st.session_state.outlets_df["Business Name"].tolist())
-        selected_item = st.selectbox(
-            "Select Product", st.session_state.inventory_df["Product Name"].tolist())
+        selected_outlet_name = st.selectbox(
+            "Select Registered Outlet",
+            st.session_state.outlets_df["Business Name"].tolist()
+        )
+
+        # Get selected outlet data for auto-fill
+        outlet_data = st.session_state.outlets_df[st.session_state.outlets_df["Business Name"]
+                                                  == selected_outlet_name].iloc[0]
+
+        category_filter = st.selectbox("Filter Category", [
+                                       "All"] + list(st.session_state.inventory_df["Category"].unique()))
+
+        if category_filter != "All":
+            filtered_inv = st.session_state.inventory_df[
+                st.session_state.inventory_df["Category"] == category_filter]
+        else:
+            filtered_inv = st.session_state.inventory_df
+
+        selected_item_name = st.selectbox(
+            "Select Product", filtered_inv["Product Name"].tolist())
+        item_row = st.session_state.inventory_df[st.session_state.inventory_df["Product Name"]
+                                                 == selected_item_name].iloc[0]
+
+        # Display Pharma Regulatory Metadata
+        st.info(
+            f"📋 **Batch No:** `{item_row['Batch Number']}` | **Expiry:** `{item_row['Expiry Date']}` | **NDA Reg:** `{item_row['NDA Reg No']}`")
+
         quantity = st.number_input("Quantity (Boxes)", min_value=1, value=5)
+
+        # Calculate dynamic volume discounts
+        discount = 0.0
+        if quantity >= 50:
+            discount = 0.10
+            st.caption("🎉 10% Bulk Volume Discount Applied!")
+        elif quantity >= 10:
+            discount = 0.05
+            st.caption("🎉 5% Tiered Volume Discount Applied!")
+
+        base_price = quantity * item_row["Unit Price (UGX)"]
+        total_price = base_price * (1 - discount)
 
     with col_b:
         st.subheader("2. Delivery Recipient Details")
-        recipient_name = st.text_input(
-            "Recipient Full Name", placeholder="e.g. Dr. Jane Okello")
-        recipient_phone = st.text_input(
-            "Recipient Mobile Phone (WhatsApp)", placeholder="e.g. 256770123456")
-        recipient_email = st.text_input(
-            "Recipient Email Address", placeholder="e.g. jane@clinic.com")
+        st.caption("Auto-filled from registered outlet profile:")
 
-    item_row = st.session_state.inventory_df[st.session_state.inventory_df["Product Name"]
-                                             == selected_item].iloc[0]
-    total_price = quantity * item_row["Unit Price (UGX)"]
+        recipient_name = st.text_input(
+            "Recipient Full Name", value=outlet_data["Contact Name"])
+        recipient_phone = st.text_input(
+            "Recipient WhatsApp Number (+256...)", value=outlet_data["Phone"])
+        recipient_email = st.text_input(
+            "Recipient Email Address", value=outlet_data["Email"])
 
     st.divider()
-    st.subheader(f"Total Amount Payable: **UGX {total_price:,.0f}**")
-    payment_method = st.radio(
-        "Payment Method", ["MTN Mobile Money", "Trade Credit Line"], horizontal=True)
 
-    if st.button("🚀 Confirm Order & Register Recipient", type="primary"):
-        if not recipient_name or not recipient_phone:
+    col_price, col_pay = st.columns([1, 2])
+    with col_price:
+        st.metric("Total Payable Amount", f"UGX {total_price:,.0f}",
+                  delta=f"-UGX {base_price - total_price:,.0f}" if discount > 0 else None)
+
+    with col_pay:
+        payment_method = st.radio(
+            "Payment Method",
+            ["MTN Mobile Money", "Airtel Money",
+                "Trade Credit Line", "Bank Wire Transfer"],
+            horizontal=True
+        )
+
+    if st.button("🚀 Confirm Order & Register Recipient", type="primary", use_container_width=True):
+        if not validate_uganda_phone(recipient_phone):
             st.error(
-                "⚠️ Please enter the Recipient's Name and Phone Number to receive delivery notifications.")
+                "⚠️ Invalid Ugandan Phone Format! Ensure it starts with `+256` followed by 9 digits (e.g., +256770123456).")
+        elif not recipient_name or not recipient_email:
+            st.error("⚠️ Please ensure Recipient Name and Email are provided.")
         elif quantity > item_row["Stock Quantity"]:
             st.error(
                 f"❌ Insufficient stock. Only {item_row['Stock Quantity']} units available.")
         else:
-            st.session_state.inventory_df.loc[st.session_state.inventory_df["Product Name"]
-                                              == selected_item, "Stock Quantity"] -= quantity
+            # Deduct inventory stock
+            st.session_state.inventory_df.loc[
+                st.session_state.inventory_df["Product Name"] == selected_item_name, "Stock Quantity"
+            ] -= quantity
+
             order_id = f"ORD-{uuid.uuid4().hex[:4].upper()}"
 
             new_order = {
                 "OrderID": order_id,
-                "Outlet": selected_outlet,
+                "Outlet": selected_outlet_name,
                 "Recipient Name": recipient_name,
                 "Recipient Phone": recipient_phone,
                 "Recipient Email": recipient_email,
+                "Product Name": selected_item_name,
+                "Quantity": quantity,
                 "Total Amount (UGX)": total_price,
                 "Payment Method": payment_method,
                 "Status": "Processing",
-                "Date": str(datetime.date.today())
+                "Date": str(datetime.date.today()),
+                "Dispatch Time": "Pending",
+                "Delivery Time": "Pending"
             }
             st.session_state.orders_df = pd.concat(
                 [pd.DataFrame([new_order]), st.session_state.orders_df], ignore_index=True)
 
             if payment_method == "Trade Credit Line":
-                st.session_state.outlets_df.loc[st.session_state.outlets_df["Business Name"]
-                                                == selected_outlet, "Used Credit (UGX)"] += total_price
+                st.session_state.outlets_df.loc[
+                    st.session_state.outlets_df[
+                        "Business Name"] == selected_outlet_name, "Used Credit (UGX)"
+                ] += total_price
 
             st.success(
-                f"✅ Order **{order_id}** recorded! Delivery notification alerts will be sent to **{recipient_name} ({recipient_phone})**.")
+                f"✅ Order **{order_id}** successfully recorded! Delivery alerts routed to **{recipient_name} ({recipient_phone})**.")
 
-# --- 2. ORDER TRACKING & NOTIFICATIONS ---
-elif choice == "🔔 Delivery Notifications & Alerts":
-    st.header("🔔 Live Delivery Notifications")
+# --- 2. DELIVERY NOTIFICATIONS & TRACKER ---
+elif choice == "🔔 Delivery Notifications":
+    st.header("🔔 Live Delivery Notifications & Order Tracker")
     st.caption(
-        "System alerts sent to recipients when sellers trigger item delivery.")
+        "Real-time system updates sent to facility managers upon order fulfillment.")
 
     delivered_orders = st.session_state.orders_df[st.session_state.orders_df["Status"].isin([
                                                                                             "Arrived", "Delivered"])]
+
     if not delivered_orders.empty:
         for _, order in delivered_orders.iterrows():
-            st.markdown(
-                f"""
+            st.markdown(f"""
                 <div class="notification-card">
-                    <h4>🎉 DELIVERY NOTIFICATION ALERT</h4>
-                    <p><b>Order ID:</b> {order['OrderID']} | <b>Outlet:</b> {order['Outlet']}</p>
-                    <p><b>Attention:</b> {order['Recipient Name']} ({order['Recipient Phone']} / {order['Recipient Email']})</p>
-                    <p><b>Status:</b> Your package has been marked as <b>DELIVERED</b> by the supplier.</p>
+                    <h4>🎉 DELIVERY CONFIRMED | Order {order['OrderID']}</h4>
+                    <p><b>Facility Outlet:</b> {order['Outlet']} | <b>Line Item:</b> {order['Product Name']} ({order['Quantity']} Boxes)</p>
+                    <p><b>Recipient:</b> {order['Recipient Name']} ({order['Recipient Phone']} / {order['Recipient Email']})</p>
+                    <p><b>Status:</b> <span class="status-badge status-delivered">DELIVERED</span> | <b>Time:</b> {order['Delivery Time']}</p>
                 </div>
-                """,
-                unsafe_allow_html=True
-            )
+            """, unsafe_allow_html=True)
+
+            # Action Buttons inside Alert Cards
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                if st.button(f"📄 View Invoice / POD", key=f"pod_{order['OrderID']}"):
+                    st.info(
+                        f"Downloading electronic Proof of Delivery for {order['OrderID']}...")
+            with c2:
+                if st.button(f"✅ Confirm Receipt", key=f"conf_{order['OrderID']}"):
+                    st.success(
+                        "Delivery receipt acknowledged by facility manager!")
+            with c3:
+                if st.button(f"⚠️ Report Issue", key=f"rep_{order['OrderID']}"):
+                    st.warning("Issue ticket opened with MedSupply Support.")
     else:
-        st.info("No active delivery notifications at the moment.")
+        st.info("No new delivery alerts at this moment.")
 
-    st.subheader("📦 All Orders Tracker")
-    st.dataframe(st.session_state.orders_df, use_container_width=True)
+    st.divider()
+    st.subheader("📦 Interactive All Orders Tracker")
 
-# --- 3. SELLER DELIVERY CONTROL CENTER ---
-elif choice == "🚚 Seller Delivery Control Center":
-    st.header("🚚 Seller Dashboard: Trigger Item Delivery")
+    # Global Filter Controls
+    search_q = st.text_input("🔍 Search by Order ID, Outlet, or Recipient Name")
+    status_filter = st.multiselect("Filter by Status", options=[
+                                   "Processing", "Dispatched", "Delivered"], default=["Processing", "Dispatched", "Delivered"])
+
+    df_display = st.session_state.orders_df.copy()
+    if search_q:
+        df_display = df_display[
+            df_display["OrderID"].str.contains(search_q, case=False) |
+            df_display["Outlet"].str.contains(search_q, case=False) |
+            df_display["Recipient Name"].str.contains(search_q, case=False)
+        ]
+    df_display = df_display[df_display["Status"].isin(status_filter)]
+
+    st.dataframe(df_display, use_container_width=True)
+
+# --- 3. SELLER CONTROL CENTER ---
+elif choice == "🚚 Seller Control Center":
+    st.header("🚚 Seller Dashboard: Dispatch & Delivery Trigger")
     st.caption(
-        "When a seller marks an order as delivered, real-time alerts are sent to the registered recipient.")
+        "Manage B2B order fulfillments, upload Proof of Delivery (POD), and update real-time delivery statuses.")
 
-    for idx, row in st.session_state.orders_df.iterrows():
-        col1, col2, col3, col4 = st.columns([2, 2, 2, 2])
-        col1.write(f"**{row['OrderID']}**\n*{row['Outlet']}*")
-        col2.write(
-            f"👤 Recipient: **{row['Recipient Name']}**\n📞 {row['Recipient Phone']}")
-        col3.write(f"Status: **{row['Status']}**")
+    # Search & Filter
+    search_term = st.text_input(
+        "Search Pending Shipments", placeholder="Enter Order ID or Facility Name...")
 
-        if row["Status"] not in ["Arrived", "Delivered"]:
-            if col4.button("🚚 Trigger Delivered", key=f"deliv_btn_{row['OrderID']}"):
-                st.session_state.orders_df.at[idx, "Status"] = "Delivered"
-                st.success(
-                    f"Notification triggered and dispatched to {row['Recipient Name']} ({row['Recipient Phone']})!")
-                st.rerun()
-        else:
-            col4.write("✅ Delivery Confirmed")
+    orders_to_show = st.session_state.orders_df.copy()
+    if search_term:
+        orders_to_show = orders_to_show[
+            orders_to_show["OrderID"].str.contains(search_term, case=False) |
+            orders_to_show["Outlet"].str.contains(search_term, case=False)
+        ]
 
-# --- 4. WHATSAPP BOT SANDBOX ---
-elif choice == "💬 WhatsApp Professional Assistant":
-    st.header("💬 Professional WhatsApp Assistant")
-
-    for chat in st.session_state.chat_history:
-        if chat["role"] == "user":
+    for idx, row in orders_to_show.iterrows():
+        with st.container():
             st.markdown(
-                f'<div class="chat-bubble-user"><b>You:</b> {chat["msg"]}</div><div style="clear:both;"></div>', unsafe_allow_html=True)
-        else:
-            st.markdown(
-                f'<div class="chat-bubble-bot"><b>MedSupply Bot:</b><br>{chat["msg"]}</div><div style="clear:both;"></div>', unsafe_allow_html=True)
+                f"##### Order ID: `{row['OrderID']}` — {row['Outlet']}")
+            col1, col2, col3 = st.columns([2, 2, 2])
 
-    st.write("")
-    with st.form("chat_form", clear_on_submit=True):
-        user_input = st.text_input("Type your message...", key="user_msg")
-        submit_chat = st.form_submit_button("Send 📤")
+            col1.write(
+                f"👤 **Recipient:** {row['Recipient Name']}\n📞 {row['Recipient Phone']}")
+            col2.write(
+                f"📦 **Item:** {row['Product Name']}\n💰 **Total:** UGX {row['Total Amount (UGX)']:,.0f}")
+            col3.write(
+                f"Status: **{row['Status']}**\nDispatch Time: *{row['Dispatch Time']}*")
 
-    if submit_chat and user_input:
-        st.session_state.chat_history.append(
-            {"role": "user", "msg": user_input})
-        msg_lower = user_input.strip().lower()
+            if row["Status"] != "Delivered":
+                pod_file = st.file_uploader(f"Upload POD Image ({row['OrderID']})", type=[
+                                            "png", "jpg", "pdf"], key=f"file_{row['OrderID']}")
 
-        if any(term in msg_lower for term in ["manager", "contact", "person", "support", "innocent", "okiror"]):
-            bot_reply = "👤 **Manager Contact Details:**\n\n• **Name:** Okiror Innocent\n• **Phone:** +256763212490\n• **Role:** Operations & Credit Manager"
-
-        elif any(term in msg_lower for term in ["price", "cost", "how much"]):
-            matched = [f"• **{r['Product Name']}**: UGX {r['Unit Price (UGX)']:,.0f}" for _, r in st.session_state.inventory_df.iterrows(
-            ) if any(w in r["Product Name"].lower() for w in msg_lower.split())]
-            if matched:
-                bot_reply = "💰 **Product Price Quote:**\n\n" + \
-                    "\n".join(matched)
+                if st.button(f"🚚 Trigger Delivered", key=f"deliv_btn_{row['OrderID']}", type="primary"):
+                    now_str = datetime.datetime.now().strftime("%Y-%m-%d %I:%M %p")
+                    st.session_state.orders_df.at[idx, "Status"] = "Delivered"
+                    st.session_state.orders_df.at[idx,
+                                                  "Delivery Time"] = now_str
+                    st.success(
+                        f"Delivery notification triggered and dispatched to {row['Recipient Name']} ({row['Recipient Phone']}) at {now_str}!")
+                    st.rerun()
             else:
+                st.write(f"✅ **Delivery Confirmed at {row['Delivery Time']}**")
+            st.divider()
+
+# --- 4. WHATSAPP ASSISTANT ---
+elif choice == "💬 WhatsApp Assistant":
+    st.header("💬 Professional WhatsApp Business Assistant")
+
+    col_chat, col_info = st.columns([3, 1])
+
+    with col_info:
+        st.subheader("Support Link")
+        st.markdown(
+            "[📲 Open WhatsApp Web](https://web.whatsapp.com/)", unsafe_allow_html=True)
+        st.info("Operations Manager:\n**Okiror Innocent**\n+256763212490")
+
+    with col_chat:
+        for chat in st.session_state.chat_history:
+            if chat["role"] == "user":
+                st.markdown(f'''
+                    <div class="chat-bubble-user">
+                        <b>You:</b> {chat["msg"]}
+                        <span class="chat-time">{chat["time"]}</span>
+                    </div><div style="clear:both;"></div>
+                ''', unsafe_allow_html=True)
+            else:
+                st.markdown(f'''
+                    <div class="chat-bubble-bot">
+                        <b>MedSupply Bot:</b><br>{chat["msg"]}
+                        <span class="chat-time">{chat["time"]}</span>
+                    </div><div style="clear:both;"></div>
+                ''', unsafe_allow_html=True)
+
+        # Quick Action Chips
+        st.write("**Quick Topics:**")
+        c1, c2, c3, c4 = st.columns(4)
+        quick_input = None
+        if c1.button("📋 CATALOG"):
+            quick_input = "CATALOG"
+        if c2.button("💰 PRICES"):
+            quick_input = "PRICES"
+        if c3.button("🚚 STATUS"):
+            quick_input = "STATUS"
+        if c4.button("👤 MANAGER"):
+            quick_input = "MANAGER"
+
+        with st.form("chat_form", clear_on_submit=True):
+            user_input = st.text_input("Type your message...", key="user_msg")
+            submit_chat = st.form_submit_button("Send 📤")
+
+        final_msg = quick_input or (user_input if submit_chat else None)
+
+        if final_msg:
+            now_t = datetime.datetime.now().strftime("%H:%M")
+            st.session_state.chat_history.append(
+                {"role": "user", "msg": final_msg, "time": now_t})
+            msg_lower = final_msg.strip().lower()
+
+            if "manager" in msg_lower or "contact" in msg_lower:
+                bot_reply = "👤 **Manager Contact Details:**\n\n• **Name:** Okiror Innocent\n• **Phone:** +256763212490\n• **Role:** Operations & Credit Manager"
+            elif "price" in msg_lower or "cost" in msg_lower or "catalog" in msg_lower:
                 items_str = "\n".join(
                     [f"• **{r['Product Name']}**: UGX {r['Unit Price (UGX)']:,.0f}" for _, r in st.session_state.inventory_df.iterrows()])
-                bot_reply = f"💰 **Wholesale Prices:**\n\n{items_str}"
+                bot_reply = f"💰 **Wholesale Catalog & Prices:**\n\n{items_str}"
+            elif "status" in msg_lower or "track" in msg_lower:
+                recent = st.session_state.orders_df.head(3)
+                orders_str = "\n".join(
+                    [f"• **{r['OrderID']}** ({r['Outlet']}): {r['Status']}" for _, r in recent.iterrows()])
+                bot_reply = f"🚚 **Recent Order Tracking Status:**\n\n{orders_str}"
+            else:
+                bot_reply = "Thank you for contacting MedSupply Uganda. Reply with **PRICES**, **MANAGER**, **CATALOG**, or **STATUS** for automated assistance."
 
-        elif any(term in msg_lower for term in ["company", "about"]):
-            bot_reply = "🏢 **About MedSupply Uganda:**\n\nMedSupply Uganda is a B2B digital pharmaceutical platform providing healthcare facilities with authentic medicines and trade credit financing."
+            st.session_state.chat_history.append(
+                {"role": "bot", "msg": bot_reply, "time": now_t})
+            st.rerun()
 
-        elif any(term in msg_lower for term in ["status", "track", "delivery", "arrived"]):
-            recent = st.session_state.orders_df.head(3)
-            orders_str = "\n".join(
-                [f"• **{r['OrderID']}** ({r['Recipient Name']}): {r['Status']}" for _, r in recent.iterrows()])
-            bot_reply = f"🚚 **Order Status:**\n\n{orders_str}"
+# --- 5. PAYMENT GATEWAYS ---
+elif choice == "📱 Payment Gateways":
+    st.header("📱 B2B Payment Gateway Integration")
 
-        else:
-            bot_reply = "Thank you for reaching out. Reply with **PRICES**, **MANAGER**, **COMPANY**, or **STATUS** for details."
+    pay_tab1, pay_tab2, pay_tab3 = st.tabs(
+        ["MTN Mobile Money", "Airtel Money", "Bank Wire Transfer"])
 
-        st.session_state.chat_history.append({"role": "bot", "msg": bot_reply})
-        st.rerun()
+    with pay_tab1:
+        st.subheader("MTN MoMo API Prompt Trigger")
+        momo_phone = st.text_input(
+            "Subscriber Phone Number", value="+256770665588")
+        momo_amount = st.number_input(
+            "Transaction Amount (UGX)", value=150000, step=10000)
 
-# --- 5. MTN MOMO GATEWAY ---
-elif choice == "📱 MTN MoMo Gateway":
-    st.header("📱 MTN MoMo Payment Gateway")
-    momo_phone = st.text_input("Subscriber Phone", value="256770665588")
-    momo_amount = st.number_input("Amount (UGX)", value=150000)
-    if st.button("💳 Trigger MoMo Prompt", type="primary"):
-        st.success(f"Payment prompt sent to {momo_phone}!")
+        c_presets1, c_presets2 = st.columns(2)
+        if c_presets1.button("Pay Full Amount"):
+            pass
+        if c_presets2.button("Pay 50% Deposit"):
+            momo_amount = momo_amount / 2
+
+        if st.button("💳 Trigger MoMo Push Prompt", type="primary"):
+            if validate_uganda_phone(momo_phone):
+                txn_id = f"TXN-MOMO-{uuid.uuid4().hex[:6].upper()}"
+                st.success(
+                    f"✅ USSD Prompt pushed to {momo_phone}! Reference ID: `{txn_id}`")
+                st.info(
+                    "Waiting for PIN confirmation on subscriber handset (45s timeout)...")
+            else:
+                st.error("Invalid phone number format! Use +256 prefix.")
+
+    with pay_tab2:
+        st.subheader("Airtel Money Merchant Checkout")
+        airtel_phone = st.text_input(
+            "Airtel Mobile Number", value="+256750123456")
+        airtel_amount = st.number_input(
+            "Amount (UGX)", value=150000, key="airtel_amt")
+        if st.button("💳 Trigger Airtel Push Prompt"):
+            st.success(f"Airtel Money prompt sent to {airtel_phone}!")
+
+    with pay_tab3:
+        st.subheader("Direct Bank Wire / EFT Details")
+        st.write("**Bank:** Stanbic Bank Uganda")
+        st.write("**Account Name:** MedSupply Uganda Limited")
+        st.write("**Account Number:** 9030012345678")
+        st.write("**Branch:** Kampala Corporate Branch")
 
 # --- 6. INVENTORY MANAGEMENT ---
 elif choice == "📦 Inventory Management":
     st.header("📦 Warehouse Stock Management")
-    st.dataframe(st.session_state.inventory_df, use_container_width=True)
+    st.caption(
+        "Use inline editing to update live inventory stock counts or unit pricing.")
 
-# --- 7. DRUG OUTLETS ---
-elif choice == "🏥 Drug Outlets & Credit":
-    st.header("🏥 Outlets & Credit Lines")
-    st.dataframe(st.session_state.outlets_df, use_container_width=True)
+    st.subheader("Interactive Stock Editor")
+    edited_df = st.data_editor(
+        st.session_state.inventory_df,
+        column_config={
+            "Unit Price (UGX)": st.column_config.NumberColumn(format="UGX %d"),
+            "Stock Quantity": st.column_config.NumberColumn(min_value=0, max_value=10000),
+            "Expiry Date": st.column_config.DateColumn()
+        },
+        use_container_width=True,
+        num_rows="dynamic"
+    )
+    st.session_state.inventory_df = edited_df
 
-# --- 8. MASTER LOGS ---
+# --- 7. OUTLETS & CREDIT LINES ---
+elif choice == "🏥 Outlets & Credit Lines":
+    st.header("🏥 Registered Outlets & Credit Facilities")
+
+    for _, row in st.session_state.outlets_df.iterrows():
+        used = row["Used Credit (UGX)"]
+        limit = row["Credit Limit (UGX)"]
+        utilization = min(used / limit, 1.0)
+
+        with st.expander(f"🏥 {row['Business Name']} ({row['Location']}) - Status: {row['Status']}"):
+            st.write(
+                f"**Contact Person:** {row['Contact Name']} | **Phone:** {row['Phone']} | **Email:** {row['Email']}")
+            st.write(f"**Credit Usage:** UGX {used:,.0f} / UGX {limit:,.0f}")
+            st.progress(utilization)
+            if utilization > 0.8:
+                st.warning("⚠️ High Credit Utilization Warning (>80%)")
+
+# --- 8. MASTER ORDER LOGS ---
 elif choice == "📋 Master Order Logs":
-    st.header("📋 Master Order Logs")
+    st.header("📋 Master Order Logs & Executive Analytics")
+
+    # Top Level KPI Summary Cards
+    kpi1, kpi2, kpi3 = st.columns(3)
+    total_rev = st.session_state.orders_df["Total Amount (UGX)"].sum()
+    total_orders = len(st.session_state.orders_df)
+    pending_count = len(
+        st.session_state.orders_df[st.session_state.orders_df["Status"] == "Processing"])
+
+    kpi1.metric("Total Platform Revenue", f"UGX {total_rev:,.0f}")
+    kpi2.metric("Total Orders Processed", total_orders)
+    kpi3.metric("Pending Fulfillment", pending_count)
+
+    st.divider()
+
+    csv_data = st.session_state.orders_df.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="📥 Export Master Logs to CSV",
+        data=csv_data,
+        file_name=f"medsupply_master_logs_{datetime.date.today()}.csv",
+        mime="text/csv"
+    )
+
     st.dataframe(st.session_state.orders_df, use_container_width=True)
