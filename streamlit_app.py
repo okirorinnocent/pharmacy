@@ -11,58 +11,63 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- MODERN STYLING & CUSTOM COLOR SCHEME ---
+# --- MODERN STYLING & COMPETITIVE UI COLOR SCHEME ---
 st.markdown("""
     <style>
-    /* Global App Background & Font */
+    /* Global Competitive Background Theme */
     .stApp {
-        background-color: #F1F5F9;
+        background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
         font-family: 'Inter', system-ui, -apple-system, sans-serif;
+        color: #F8FAFC;
     }
     
     /* Header & Card Containers */
     .metric-card {
-        background: #FFFFFF;
+        background: #1E293B;
         padding: 1.25rem;
         border-radius: 12px;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
-        border: 1px solid #E2E8F0;
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+        border: 1px solid #334155;
         text-align: center;
+        color: #F8FAFC;
     }
     
-    /* WhatsApp Chat Styles */
+    /* Dynamic WhatsApp Chat Styling */
     .chat-bubble-user {
-        background: #DCF8C6;
+        background: #059669;
         padding: 12px 16px;
         border-radius: 16px 16px 0px 16px;
         max-width: 75%;
         float: right;
-        margin: 6px 0;
+        margin: 8px 0;
         font-size: 0.95rem;
-        color: #0F172A;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        color: #FFFFFF;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
     }
     .chat-bubble-bot {
-        background: #FFFFFF;
-        padding: 12px 16px;
+        background: #334155;
+        padding: 14px 18px;
         border-radius: 16px 16px 16px 0px;
-        max-width: 75%;
+        max-width: 80%;
         float: left;
-        margin: 6px 0;
-        border: 1px solid #E2E8F0;
+        margin: 8px 0;
+        border: 1px solid #475569;
         font-size: 0.95rem;
-        color: #0F172A;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        color: #F8FAFC;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        line-height: 1.5;
     }
     
-    /* Custom Notification Banner */
+    /* Dynamic Notification Banners */
     .notification-box {
-        padding: 1rem;
-        border-radius: 8px;
-        background-color: #EFF6FF;
-        border-left: 5px solid #3B82F6;
-        margin-bottom: 1rem;
-        color: #1E3A8A;
+        padding: 1.2rem;
+        border-radius: 10px;
+        background-color: #064E3B;
+        border-left: 6px solid #10B981;
+        margin-bottom: 1.2rem;
+        color: #ECFDF5;
+        font-size: 1rem;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
     }
     </style>
 """, unsafe_allow_html=True)
@@ -105,7 +110,7 @@ if "inventory_df" not in st.session_state:
 if "orders_df" not in st.session_state:
     st.session_state.orders_df = pd.DataFrame([
         {"OrderID": "ORD-9901", "Outlet": "Kampala Care Pharmacy",
-         "Total Amount (UGX)": 175000, "Payment Method": "MTN Mobile Money", "Status": "Arrived", "Date": "2026-09-28", "Notified": True},
+         "Total Amount (UGX)": 175000, "Payment Method": "MTN Mobile Money", "Status": "Arrived", "Date": "2026-09-28", "Notified": False},
         {"OrderID": "ORD-9902", "Outlet": "Mbarara Express Clinic",
          "Total Amount (UGX)": 425000, "Payment Method": "Trade Credit Line", "Status": "Dispatched", "Date": "2026-09-29", "Notified": False}
     ])
@@ -120,7 +125,7 @@ if "momo_logs" not in st.session_state:
 
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = [
-        {"role": "bot", "msg": "👋 Welcome to **MedSupply Uganda**!\n\nOptions:\n1. Type **CATALOG** to see available stock.\n2. Type **STATUS** to track your recent orders.\n3. Type **CREDIT** to view your balance."}
+        {"role": "bot", "msg": "👋 Welcome to **MedSupply Uganda Professional Support**.\n\nI can assist you with product pricing, order tracking, credit status, and company details.\n\nType keywords like **CATALOG**, **PRICE**, **MANAGER**, **COMPANY**, or **STATUS** to start."}
     ]
 
 # --- SIDEBAR NAVIGATION ---
@@ -132,8 +137,9 @@ with st.sidebar:
 
     menu = [
         "🛒 Place New Order",
-        "🔔 Order Tracking & Notifications",
-        "💬 WhatsApp Bot Sandbox",
+        "🔔 Delivery Notifications & Tracking",
+        "🚚 Seller Delivery Control Dashboard",
+        "💬 WhatsApp Professional Assistant",
         "📱 MTN MoMo Gateway",
         "📦 Inventory Management",
         "🏥 Drug Outlets & Credit",
@@ -146,7 +152,7 @@ with st.sidebar:
         st.session_state.orders_df[st.session_state.orders_df["Status"] == "Arrived"])
     if unread_count > 0:
         st.info(
-            f"🔔 **{unread_count} Order(s) Arrived!** Check the tracking page.")
+            f"🔔 **{unread_count} Order(s) Delivered/Arrived!** Check notifications.")
 
 # --- 1. PLACE NEW ORDER ---
 if choice == "🛒 Place New Order":
@@ -175,16 +181,12 @@ if choice == "🛒 Place New Order":
                               "MTN Mobile Money", "Trade Credit Line"], horizontal=True)
 
     if st.button("🚀 Confirm & Process Order", type="primary"):
-        # Stock Check
         if quantity > item_row["Stock Quantity"]:
             st.error(
                 f"❌ Insufficient stock. Only {item_row['Stock Quantity']} units available.")
         else:
-            # Deduct inventory
             st.session_state.inventory_df.loc[st.session_state.inventory_df["Product Name"]
                                               == selected_item, "Stock Quantity"] -= quantity
-
-            # Record Order
             order_id = f"ORD-{uuid.uuid4().hex[:4].upper()}"
             new_order = {
                 "OrderID": order_id,
@@ -198,7 +200,6 @@ if choice == "🛒 Place New Order":
             st.session_state.orders_df = pd.concat(
                 [pd.DataFrame([new_order]), st.session_state.orders_df], ignore_index=True)
 
-            # Update outlet credit usage if chosen
             if payment_method == "Trade Credit Line":
                 st.session_state.outlets_df.loc[st.session_state.outlets_df["Business Name"]
                                                 == selected_outlet, "Used Credit (UGX)"] += total_price
@@ -207,42 +208,52 @@ if choice == "🛒 Place New Order":
                 f"✅ Order **{order_id}** placed successfully! Status: Processing.")
 
 # --- 2. ORDER TRACKING & NOTIFICATIONS ---
-elif choice == "🔔 Order Tracking & Notifications":
+elif choice == "🔔 Delivery Notifications & Tracking":
     st.header("🔔 Order Notifications & Delivery Tracking")
-    st.caption("Track order status in real time and receive delivery alerts.")
+    st.caption(
+        "Track delivery statuses in real-time. Direct alerts trigger when a seller marks an item as delivered.")
 
-    # Show active notification banner for arrived items
-    arrived_orders = st.session_state.orders_df[st.session_state.orders_df["Status"] == "Arrived"]
+    # Delivery Alerts triggered by Seller
+    arrived_orders = st.session_state.orders_df[st.session_state.orders_df["Status"].isin([
+                                                                                          "Arrived", "Delivered"])]
     if not arrived_orders.empty:
         for _, order in arrived_orders.iterrows():
             st.markdown(
-                f'<div class="notification-box">🎉 <b>Delivery Notification:</b> Order <b>{order["OrderID"]}</b> for <b>{order["Outlet"]}</b> has ARRIVED at the delivery point!</div>',
+                f'<div class="notification-box">🎉 <b>Delivery Alert:</b> Order <b>{order["OrderID"]}</b> for <b>{order["Outlet"]}</b> has been delivered by the seller! Please confirm receipt.</div>',
                 unsafe_allow_html=True
             )
+    else:
+        st.info("No new arrival notifications at the moment.")
 
-    st.subheader("📦 Order Delivery Status")
+    st.subheader("📦 Active Orders")
+    st.dataframe(st.session_state.orders_df, use_container_width=True)
 
-    # Allow manual status change simulation (e.g. mark as Dispatched / Arrived)
+# --- 3. SELLER DELIVERY CONTROL DASHBOARD ---
+elif choice == "🚚 Seller Delivery Control Dashboard":
+    st.header("🚚 Seller Control Center: Trigger Order Delivery")
+    st.caption("Sellers can update order status here. Updating status to 'Arrived' or 'Delivered' automatically triggers buyer alerts.")
+
     for idx, row in st.session_state.orders_df.iterrows():
         col1, col2, col3, col4 = st.columns([2, 2, 2, 2])
         col1.write(f"**{row['OrderID']}** ({row['Outlet']})")
         col2.write(f"UGX {row['Total Amount (UGX)']:,.0f}")
-        col3.write(f"Status: **{row['Status']}**")
+        col3.write(f"Current Status: **{row['Status']}**")
 
-        # Admin button to simulate arrival for testing
-        if row["Status"] != "Arrived":
-            if col4.button(f"Simulate Arrival", key=f"btn_{row['OrderID']}"):
+        if row["Status"] not in ["Arrived", "Delivered"]:
+            if col4.button("🚚 Trigger Delivered", key=f"seller_btn_{row['OrderID']}"):
                 st.session_state.orders_df.at[idx, "Status"] = "Arrived"
+                st.session_state.orders_df.at[idx, "Notified"] = True
+                st.success(
+                    f"Notification triggered for Order {row['OrderID']}!")
                 st.rerun()
         else:
-            col4.write("✅ Delivered")
+            col4.write("✅ Delivery Triggered")
 
-# --- 3. WHATSAPP BOT SANDBOX ---
-elif choice == "💬 WhatsApp Bot Sandbox":
-    st.header("💬 Interactive WhatsApp Assistant")
-    st.caption("Simulates dynamic 2-way conversation with context memory.")
+# --- 4. WHATSAPP BOT SANDBOX ---
+elif choice == "💬 WhatsApp Professional Assistant":
+    st.header("💬 Interactive Professional WhatsApp Assistant")
+    st.caption("Context-aware, responsive corporate chatbot.")
 
-    # Render previous messages
     for chat in st.session_state.chat_history:
         if chat["role"] == "user":
             st.markdown(
@@ -253,7 +264,7 @@ elif choice == "💬 WhatsApp Bot Sandbox":
 
     st.write("")
     with st.form("chat_form", clear_on_submit=True):
-        user_input = st.text_input("Type message here...", key="user_msg")
+        user_input = st.text_input("Type your message here...", key="user_msg")
         submit_chat = st.form_submit_button("Send 📤")
 
     if submit_chat and user_input:
@@ -261,28 +272,50 @@ elif choice == "💬 WhatsApp Bot Sandbox":
             {"role": "user", "msg": user_input})
         msg_lower = user_input.strip().lower()
 
-        # Conversational Response Engine
-        if "1" in msg_lower or "catalog" in msg_lower or "stock" in msg_lower:
-            items_str = "\n".join(
-                [f"• *{row['Product Name']}*: UGX {row['Unit Price (UGX)']:,.0f} ({row['Stock Quantity']} left)" for _, row in st.session_state.inventory_df.iterrows()])
-            bot_reply = f"📦 **Current Medicine Catalog:**\n\n{items_str}\n\n*Reply with 'Order [item name]' to buy stock.*"
+        # Dynamic Engine logic targeting specific business queries
+        if any(term in msg_lower for term in ["manager", "contact", "person", "support", "innocent", "okiror"]):
+            bot_reply = "👤 **Manager Contact Details:**\n\n• **Name:** Okiror Innocent\n• **Phone/WhatsApp:** +256763212490\n• **Role:** Operations & Credit Manager\n\nFeel free to contact him directly for escalated support or custom credit limits."
 
-        elif "2" in msg_lower or "status" in msg_lower or "track" in msg_lower or "arrived" in msg_lower:
+        elif any(term in msg_lower for term in ["price", "cost", "how much", "rate"]):
+            # Check if asking about specific stock item
+            matched_items = []
+            for _, row in st.session_state.inventory_df.iterrows():
+                if any(word in row["Product Name"].lower() for word in msg_lower.split()):
+                    matched_items.append(
+                        f"• **{row['Product Name']}**: UGX {row['Unit Price (UGX)']:,.0f}")
+
+            if matched_items:
+                bot_reply = "💰 **Requested Product Price Quote(s):**\n\n" + "\n".join(
+                    matched_items) + "\n\nPrices are wholesale rates and subject to stock availability."
+            else:
+                items_str = "\n".join(
+                    [f"• **{row['Product Name']}**: UGX {row['Unit Price (UGX)']:,.0f}" for _, row in st.session_state.inventory_df.iterrows()])
+                bot_reply = f"💰 **Current Wholesale Price List:**\n\n{items_str}\n\n*Specify an item name for tailored pricing.*"
+
+        elif any(term in msg_lower for term in ["catalog", "stock", "items", "medicine", "inventory"]):
+            items_str = "\n".join(
+                [f"• **{row['Product Name']}**: UGX {row['Unit Price (UGX)']:,.0f} ({row['Stock Quantity']} boxes available)" for _, row in st.session_state.inventory_df.iterrows()])
+            bot_reply = f"📦 **Available Pharmaceutical Inventory:**\n\n{items_str}\n\nYou can place direct orders under the **🛒 Place New Order** tab."
+
+        elif any(term in msg_lower for term in ["company", "about", "medsupply", "who are you"]):
+            bot_reply = "🏢 **About MedSupply Uganda:**\n\nMedSupply Uganda is a premier B2B digital pharmaceutical distribution and micro-credit financing platform. We empower health centers, clinics, and pharmacies across Uganda with seamless pharmaceutical supply chains and flexible trade credit financing."
+
+        elif any(term in msg_lower for term in ["status", "track", "order", "delivery"]):
             recent_orders = st.session_state.orders_df.head(3)
             orders_str = "\n".join(
-                [f"• *{row['OrderID']}*: {row['Status']} (Amount: UGX {row['Total Amount (UGX)']:,.0f})" for _, row in recent_orders.iterrows()])
-            bot_reply = f"🚚 **Your Recent Orders & Delivery Status:**\n\n{orders_str}"
+                [f"• **{row['OrderID']}** ({row['Outlet']}): Status **{row['Status']}** | Value: UGX {row['Total Amount (UGX)']:,.0f}" for _, row in recent_orders.iterrows()])
+            bot_reply = f"🚚 **Recent Order & Delivery Tracking:**\n\n{orders_str}\n\nNotifications trigger automatically once the seller dispatches or delivers your order."
 
-        elif "3" in msg_lower or "credit" in msg_lower:
-            bot_reply = "💳 **Micro-Credit Overview:**\nApproved Limit: **UGX 5,000,000**\nAvailable Limit: **UGX 3,500,000**\nStatus: *Eligible for instant order dispatch.*"
+        elif any(term in msg_lower for term in ["credit", "loan", "balance", "limit"]):
+            bot_reply = "💳 **Micro-Credit Facility:**\n\n• Approved Credit Line: **UGX 5,000,000**\n• Repayment Window: **30 Days**\n• Interest Rate: **0% introductory rate for verified outlets**\n\nContact manager **Okiror Innocent (+256763212490)** for credit extensions."
 
         else:
-            bot_reply = f"Thanks for your message: *\"{user_input}\"*\n\nHow can I help?\n• Type **CATALOG** to see drugs\n• Type **STATUS** to check delivery alerts\n• Type **CREDIT** for loan status"
+            bot_reply = f"Thank you for contacting MedSupply Uganda.\n\nHow can I best assist you today?\n• Ask about **PRICES** or specific drug costs\n• Ask for **MANAGER** contact details\n• Inquire **ABOUT COMPANY** information\n• Type **CATALOG** or **TRACK STATUS**"
 
         st.session_state.chat_history.append({"role": "bot", "msg": bot_reply})
         st.rerun()
 
-# --- 4. MTN MOMO GATEWAY ---
+# --- 5. MTN MOMO GATEWAY ---
 elif choice == "📱 MTN MoMo Gateway":
     st.header("📱 Direct Push MoMo Payment")
 
@@ -324,7 +357,7 @@ elif choice == "📱 MTN MoMo Gateway":
         st.subheader("MoMo Transaction Logs")
         st.dataframe(st.session_state.momo_logs, use_container_width=True)
 
-# --- 5. ADMIN INVENTORY & STOCK MANAGEMENT ---
+# --- 6. ADMIN INVENTORY MANAGEMENT ---
 elif choice == "📦 Inventory Management":
     st.header("📦 Warehouse Stock & Inventory Control")
 
@@ -364,7 +397,7 @@ elif choice == "📦 Inventory Management":
                 st.success(f"Added '{item_name}' to inventory!")
                 st.rerun()
 
-# --- 6. DRUG OUTLETS & CREDIT ONBOARDING ---
+# --- 7. DRUG OUTLETS & CREDIT ONBOARDING ---
 elif choice == "🏥 Drug Outlets & Credit":
     st.header("🏥 Registered Pharmacy Outlets & Credit Lines")
 
@@ -407,7 +440,7 @@ elif choice == "🏥 Drug Outlets & Credit":
                     f"Registered outlet '{outlet_name}' with UGX {credit_limit:,.0f} credit line!")
                 st.rerun()
 
-# --- 7. MASTER ORDER LOGS ---
+# --- 8. MASTER ORDER LOGS ---
 elif choice == "📋 Master Order Logs":
     st.header("📋 Master Order Logs & Delivery Audit")
     st.dataframe(st.session_state.orders_df, use_container_width=True)
