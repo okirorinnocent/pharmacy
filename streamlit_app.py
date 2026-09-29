@@ -6,16 +6,16 @@ import pandas as pd
 import sys
 from pathlib import Path
 
-# 1. MUST BE FIRST: Insert the root folder into Python's module lookup path
-root_path = Path(__file__).resolve().parent
-if str(root_path) not in sys.path:
-    sys.path.insert(0, str(root_path))
+# Line 1-6: Modify sys.path BEFORE any local imports
+ROOT_DIR = Path(__file__).resolve().parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
-# 2. Standard and Third-Party Imports
+# Standard library and third-party imports
 
-# 3. Local Application Imports (now safe because sys.path is updated)
+# Local project imports (MUST come after sys.path setup)
 
-# --- PAGE CONFIGURATION ---
+# --- APP CONFIGURATION ---
 st.set_page_config(
     page_title="MedSupply Uganda Dashboard",
     page_icon="🏥",
@@ -29,8 +29,6 @@ st.title("🏥 MedSupply Uganda — Operations Dashboard")
 
 menu = ["Overview", "Drug Outlets & Credit", "Inventory Management", "Orders"]
 choice = st.sidebar.selectbox("Navigation", menu)
-
-# --- NAVIGATION ROUTING ---
 
 if choice == "Overview":
     st.header("System Overview")
