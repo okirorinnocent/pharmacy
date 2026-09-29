@@ -288,22 +288,28 @@ with st.sidebar:
 # --- 5. PAGE ROUTING ---
 
 # CHOICE: ACCOUNT PORTAL (LOGIN & SIGNUP)
-if choice == "🔐 Account Portal":
+elif choice == "🔐 Account Portal":
     st.header("🔐 User Account Portal")
     st.caption(
         "Create an account or log in to manage orders, credit lines, and delivery tracking.")
 
     tab_login, tab_signup = st.tabs(["🔑 Log In", "📝 Create New Account"])
 
+    # --- 1. LOGIN TAB ---
     with tab_login:
         st.subheader("Login to Your Account")
-        login_email = st.text_input(
-            "Account Email Address", key="login_email_key").strip().lower()
-        login_pass = st.text_input(
-            "Password", type="password", key="login_pass_key")
+        with st.form("login_form", clear_on_submit=False):
+            login_email = st.text_input(
+                "Account Email Address", key="login_email_input").strip().lower()
+            login_pass = st.text_input(
+                "Password", type="password", key="login_pass_input")
+            submit_login = st.form_submit_button(
+                "🔑 Log In", type="primary", use_container_width=True)
 
-        if st.button("🔑 Log In", type="primary", use_container_width=True):
-            if login_email in st.session_state.user_accounts:
+        if submit_login:
+            if not login_email or not login_pass:
+                st.error("⚠️ Please fill in both email and password.")
+            elif login_email in st.session_state.user_accounts:
                 if st.session_state.user_accounts[login_email]["password"] == login_pass:
                     st.session_state.current_user = login_email
                     st.success(
@@ -315,41 +321,56 @@ if choice == "🔐 Account Portal":
                 st.error(
                     "❌ Account not found. Please register first under 'Create New Account'.")
 
+    # --- 2. SIGNUP TAB (FIXED WITH ST.FORM) ---
     with tab_signup:
         st.subheader("Register Pharmacy / Clinic Account")
-        new_biz = st.text_input(
-            "Pharmacy / Business Name", placeholder="e.g. Kampala Care Pharmacy")
-        new_name = st.text_input(
-            "Contact Person Full Name", placeholder="e.g. Dr. Jane Okello")
-        new_email = st.text_input(
-            "Email Address", placeholder="e.g. jane@carepharma.com").strip().lower()
-        new_phone = st.text_input(
-            "WhatsApp Mobile (+256...)", placeholder="e.g. +256770123456")
-        new_loc = st.text_input(
-            "Physical Location / City", placeholder="e.g. Kampala Central")
-        new_pass = st.text_input("Create Password", type="password")
 
-        if st.button("📝 Register Account", type="primary", use_container_width=True):
-            if not new_biz or not new_name or not new_email or not new_pass:
-                st.error("⚠️ Please fill in all required fields.")
+        with st.form("signup_form", clear_on_submit=False):
+            col_reg1, col_reg2 = st.columns(2)
+
+            with col_reg1:
+                new_biz = st.text_input(
+                    "Pharmacy / Business Name *", placeholder="e.g. Kampala Care Pharmacy", key="reg_biz")
+                new_name = st.text_input(
+                    "Contact Person Full Name *", placeholder="e.g. Dr. Jane Okello", key="reg_name")
+                new_email = st.text_input(
+                    "Email Address *", placeholder="e.g. igirado27@gmail.com", key="reg_email").strip().lower()
+
+            with col_reg2:
+                new_phone = st.text_input(
+                    "WhatsApp Mobile (+256...) *", placeholder="e.g. +256770665588", key="reg_phone")
+                new_loc = st.text_input(
+                    "Physical Location / City *", placeholder="e.g. Kampala", key="reg_loc")
+                new_pass = st.text_input(
+                    "Create Password *", type="password", key="reg_pass")
+
+            submit_signup = st.form_submit_button(
+                "📝 Register Account", type="primary", use_container_width=True)
+
+        if submit_signup:
+            if not new_biz or not new_name or not new_email or not new_phone or not new_loc or not new_pass:
+                st.error("⚠️ Please fill in all required fields marked with *.")
             elif not validate_uganda_phone(new_phone):
                 st.error(
-                    "⚠️ Invalid Ugandan Phone Format! Ensure it starts with `+256` followed by 9 digits.")
+                    "⚠️ Invalid Ugandan Phone Format! Ensure it starts with `+256` followed by 9 digits (e.g., +256770665588).")
             elif new_email in st.session_state.user_accounts:
                 st.error(
                     "⚠️ An account with this email already exists. Please log in.")
             else:
-                # Save new account
+                # Determine role based on email
+                assigned_role = "Staff / Admin" if new_email == "okirorinnocent49@gmail.com" else "Customer / Buyer"
+
+                # Save to memory
                 st.session_state.user_accounts[new_email] = {
                     "password": new_pass,
                     "business_name": new_biz,
                     "contact_name": new_name,
                     "phone": new_phone,
                     "location": new_loc,
-                    "role": "Staff / Admin" if new_email == "okirorinnocent49@gmail.com" else "Customer / Buyer"
+                    "role": assigned_role
                 }
 
-                # Register outlet in database if not present
+                # Add to outlets DataFrame
                 new_outlet = {
                     "ID": f"OUT-{uuid.uuid4().hex[:3].upper()}",
                     "Business Name": new_biz,
@@ -364,11 +385,11 @@ if choice == "🔐 Account Portal":
                 st.session_state.outlets_df = pd.concat(
                     [pd.DataFrame([new_outlet]), st.session_state.outlets_df], ignore_index=True)
 
+                # Set user state & refresh
                 st.session_state.current_user = new_email
                 st.success(
-                    "🎉 Account successfully created! You are now logged in.")
+                    "🎉 Account successfully registered! You are now logged in.")
                 st.rerun()
-
 # CHOICE: PLACE NEW ORDER
 elif choice == "🛒 Place New Order":
     st.header("🛒 Place Order & Notification Setup")
