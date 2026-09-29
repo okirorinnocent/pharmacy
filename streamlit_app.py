@@ -563,11 +563,11 @@ elif choice == "📱 Payment Gateways":
         st.write("**Account Number:** 9030012345678")
         st.write("**Branch:** Kampala Corporate Branch")
 
-# CHOICE 6: INVENTORY MANAGEMENT (ST.DATA_EDITOR FIXED)
+# CHOICE 6: INVENTORY MANAGEMENT
 elif choice == "📦 Inventory Management":
     st.header("📦 Warehouse Stock Management")
     st.caption(
-        "Use inline editing to update live inventory stock counts or unit pricing.")
+        "Use inline editing to update live inventory stock counts, unit pricing, or batch details.")
 
     # Low Stock Alerts Banner
     low_stock = st.session_state.inventory_df[st.session_state.inventory_df["Stock Quantity"] < 200]
@@ -578,14 +578,31 @@ elif choice == "📦 Inventory Management":
 
     st.subheader("Interactive Stock Editor")
 
-    # Safe DataFrame copy with date typing enforced
-    df_to_edit = st.session_state.inventory_df.copy()
-    if not pd.api.types.is_datetime64_any_dtype(df_to_edit["Expiry Date"]):
-        df_to_edit["Expiry Date"] = pd.to_datetime(
-            df_to_edit["Expiry Date"]).dt.date
+    # Callback to commit edits directly into st.session_state
+    def update_inventory():
+        edited_state = st.session_state["inventory_editor"]
 
-    edited_df = st.data_editor(
-        df_to_edit,
+        # Apply updated cell edits
+        for row_idx, changes in edited_state.get("edited_rows", {}).items():
+            for col, value in changes.items():
+                st.session_state.inventory_df.at[row_idx, col] = value
+
+        # Apply newly added rows
+        for new_row in edited_state.get("added_rows", []):
+            st.session_state.inventory_df = pd.concat(
+                [st.session_state.inventory_df, pd.DataFrame([new_row])],
+                ignore_index=True
+            )
+
+        # Apply deleted rows
+        if edited_state.get("deleted_rows"):
+            st.session_state.inventory_df = st.session_state.inventory_df.drop(
+                edited_state["deleted_rows"]
+            ).reset_index(drop=True)
+
+    # Render data_editor linked to session state
+    st.data_editor(
+        st.session_state.inventory_df,
         column_config={
             "Item ID": st.column_config.TextColumn("Item ID", required=True),
             "Product Name": st.column_config.TextColumn("Product Name", required=True),
@@ -598,11 +615,9 @@ elif choice == "📦 Inventory Management":
         },
         use_container_width=True,
         num_rows="dynamic",
-        key="inventory_editor"
+        key="inventory_editor",
+        on_change=update_inventory
     )
-
-    st.session_state.inventory_df = edited_df
-
 # CHOICE 7: OUTLETS & CREDIT LINES
 elif choice == "🏥 Outlets & Credit Lines":
     st.header("🏥 Registered Outlets & Credit Facilities")
