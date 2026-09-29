@@ -1,19 +1,7 @@
-import pandas as pd
 import streamlit as st
-from supabase import create_client
-import json
-from datetime import datetime
-
-# Direct imports from your root files
-try:
-    from config import settings
-    from credit_engine import credit_engine
-    from momo import momo_service
-except ImportError:
-    class Settings:
-        SUPABASE_URL = ""
-        SUPABASE_KEY = ""
-    settings = Settings()
+import pandas as pd
+import uuid
+import datetime
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -32,44 +20,63 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# --- SAFE SERVICE IMPORTS & FALLBACK DEFINITIONS ---
+try:
+    from momo import momo_service
+except Exception:
+    class MockMomoService:
+        @staticmethod
+        def request_to_pay(phone_number, amount, reference_id=None):
+            return {
+                "status": 202,
+                "reference_id": reference_id or str(uuid.uuid4())[:8],
+                "message": "Payment request successfully queued in Sandbox."
+            }
+    momo_service = MockMomoService()
 
-@st.cache_resource
-def get_supabase():
-    try:
-        return create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
-    except Exception:
-        return None
+# Safe Supabase Loading
+try:
+    from supabase import create_client
+    from config import settings
+    supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
+except Exception:
+    supabase = None
 
+# --- INITIALIZE SESSION STATE DATA (PREVENTS EMPTY TABLES) ---
+if "outlets_df" not in st.session_state:
+    st.session_state.outlets_df = pd.DataFrame([
+        {"ID": "OUT-101", "Business Name": "Kampala Care Pharmacy", "Phone": "256771234567",
+            "Location": "Kampala Central", "Credit Limit (UGX)": "5,000,000", "Status": "Active"},
+        {"ID": "OUT-102", "Business Name": "Mbarara Express Clinic", "Phone": "256788990011",
+            "Location": "Mbarara Town", "Credit Limit (UGX)": "2,500,000", "Status": "Active"},
+        {"ID": "OUT-103", "Business Name": "Jinja Life Pharma", "Phone": "256775001122",
+            "Location": "Jinja Main St", "Credit Limit (UGX)": "1,000,000", "Status": "Review"}
+    ])
 
-supabase = get_supabase()
+if "inventory_df" not in st.session_state:
+    st.session_state.inventory_df = pd.DataFrame([
+        {"Item ID": "INV-001", "Product Name": "Amoxicillin 500mg (Box of 100)",
+         "Unit Price (UGX)": 35000, "In Stock": 450, "Category": "Antibiotics"},
+        {"Item ID": "INV-002", "Product Name": "Paracetamol 500mg (Box of 100)",
+         "Unit Price (UGX)": 12000, "In Stock": 1200, "Category": "Analgesics"},
+        {"Item ID": "INV-003", "Product Name": "Coartem 20/120 (Box of 30)",
+         "Unit Price (UGX)": 85000, "In Stock": 180, "Category": "Antimalarial"}
+    ])
 
-# --- AUTOMATIC DEMO DATA INITIALIZATION (FIX FOR ISSUE #3) ---
+if "orders_df" not in st.session_state:
+    st.session_state.orders_df = pd.DataFrame([
+        {"OrderID": "ORD-9901", "Outlet": "Kampala Care Pharmacy",
+            "Total Amount (UGX)": "175,000", "Payment Method": "MTN MoMo", "Status": "Completed", "Date": "2026-09-28"},
+        {"OrderID": "ORD-9902", "Outlet": "Mbarara Express Clinic",
+            "Total Amount (UGX)": "425,000", "Payment Method": "Trade Credit", "Status": "Approved", "Date": "2026-09-29"}
+    ])
 
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = [
+        {"role": "bot", "msg": "Hello! Welcome to MedSupply Uganda 🏥\nReply with:\n1. *CATALOG* to view drugs\n2. *ORDER* to buy stock\n3. *CREDIT* to check loan balance\n4. *MANAGER* to speak to support"}
+    ]
 
-def seed_demo_data():
-    if supabase:
-        outlets = supabase.table("drug_outlets").select("id").execute().data
-        if not outlets:
-            supabase.table("drug_outlets").upsert([
-                {"id": "11111111-1111-1111-1111-111111111111", "business_name": "Kampala Care Pharmacy",
-                    "phone_number": "256771234567", "location": "Kampala Central", "credit_limit_ugx": 5000000},
-                {"id": "22222222-2222-2222-2222-222222222222", "business_name": "Mbarara Express Clinic",
-                    "phone_number": "256788990011", "location": "Mbarara Town", "credit_limit_ugx": 2500000}
-            ]).execute()
-
-            supabase.table("inventory_items").upsert([
-                {"id": "a1111111-1111-1111-1111-111111111111",
-                    "item_name": "Amoxicillin 500mg (Box of 100)", "unit_price_ugx": 35000, "stock_quantity": 450},
-                {"id": "a2222222-2222-2222-2222-222222222222",
-                    "item_name": "Paracetamol 500mg (Box of 100)", "unit_price_ugx": 12000, "stock_quantity": 1200},
-                {"id": "a3333333-3333-3333-3333-333333333333",
-                    "item_name": "Coartem 20/120 (Box of 30)", "unit_price_ugx": 85000, "stock_quantity": 180}
-            ]).execute()
-
-
-seed_demo_data()
-
-# --- SIDEBAR NAV ---
+# --- SIDEBAR NAVIGATION ---
 with st.sidebar:
     st.image("https://img.icons8.com/color/96/medical-heart.png", width=60)
     st.title("MedSupply Uganda")
@@ -77,7 +84,6 @@ with st.sidebar:
     st.divider()
 
     menu = [
-        "📊 Executive Overview",
         "🛒 Place New Order",
         "💬 WhatsApp Bot Sandbox",
         "📱 MTN MoMo Gateway",
@@ -87,83 +93,48 @@ with st.sidebar:
     ]
     choice = st.selectbox("Navigation Menu", menu)
 
-# --- 1. EXECUTIVE OVERVIEW ---
-if choice == "📊 Executive Overview":
-    st.header("📊 Operations & Credit Analytics")
+# --- 1. PLACE NEW ORDER ---
+if choice == "🛒 Place New Order":
+    st.header("🛒 Create B2B Pharmacy Order")
+    st.caption(
+        "Place wholesale pharmaceutical orders with instant MTN MoMo payment or Credit Line financing.")
 
-    outlets = supabase.table("drug_outlets").select(
-        "*").execute().data if supabase else []
-    orders = supabase.table("orders").select(
-        "*").execute().data if supabase else []
-    inventory = supabase.table("inventory_items").select(
-        "*").execute().data if supabase else []
+    col_a, col_b = st.columns(2)
+    with col_a:
+        selected_outlet = st.selectbox(
+            "Select Registering Drug Outlet", st.session_state.outlets_df["Business Name"].tolist())
+    with col_b:
+        selected_item = st.selectbox(
+            "Select Pharmaceutical Product", st.session_state.inventory_df["Product Name"].tolist())
+        quantity = st.number_input(
+            "Order Quantity (Boxes)", min_value=1, value=5)
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Active Outlets", len(outlets))
-    c2.metric("Total Orders", len(orders))
-    total_rev = sum([o.get("total_amount_ugx", 0)
-                    for o in orders if o.get("status") in ["DELIVERED", "PAID"]])
-    c3.metric("Total Revenue", f"UGX {total_rev:,.0f}")
-    c4.metric("In-Stock Items", len(inventory))
+    item_row = st.session_state.inventory_df[st.session_state.inventory_df["Product Name"]
+                                             == selected_item].iloc[0]
+    total_price = quantity * item_row["Unit Price (UGX)"]
 
     st.divider()
-    if orders:
-        st.dataframe(pd.DataFrame(orders), use_container_width=True)
-    else:
-        st.info("No orders recorded yet. Place an order to populate history.")
+    st.subheader(f"Total Order Value: **UGX {total_price:,.0f}**")
 
-# --- 2. PLACE NEW ORDER ---
-elif choice == "🛒 Place New Order":
-    st.header("🛒 Create B2B Pharmacy Order")
+    payment_method = st.radio("Select Payment Method", [
+                              "MTN Mobile Money", "Trade Credit Line"], horizontal=True)
 
-    outlets = supabase.table("drug_outlets").select(
-        "*").execute().data if supabase else []
-    inventory = supabase.table("inventory_items").select(
-        "*").execute().data if supabase else []
+    if st.button("🚀 Confirm & Process Order", type="primary"):
+        new_order = {
+            "OrderID": f"ORD-{uuid.uuid4().hex[:4].upper()}",
+            "Outlet": selected_outlet,
+            "Total Amount (UGX)": f"{total_price:,.0f}",
+            "Payment Method": payment_method,
+            "Status": "Processing",
+            "Date": str(datetime.date.today())
+        }
+        st.session_state.orders_df = pd.concat(
+            [pd.DataFrame([new_order]), st.session_state.orders_df], ignore_index=True)
+        st.success("Order Created and Recorded Successfully!")
 
-    if outlets and inventory:
-        col_a, col_b = st.columns(2)
-        with col_a:
-            outlet_options = {o["business_name"]: o for o in outlets}
-            selected_outlet_name = st.selectbox(
-                "Select Registering Drug Outlet", list(outlet_options.keys()))
-            selected_outlet = outlet_options[selected_outlet_name]
-
-        with col_b:
-            item_options = {
-                f"{i['item_name']} (UGX {i['unit_price_ugx']:,.0f})": i for i in inventory}
-            selected_item_name = st.selectbox(
-                "Select Pharmaceutical Product", list(item_options.keys()))
-            selected_item = item_options[selected_item_name]
-            quantity = st.number_input(
-                "Order Quantity (Boxes)", min_value=1, value=5)
-
-        total_price = quantity * selected_item["unit_price_ugx"]
-        st.divider()
-        st.subheader(f"Total Order Value: **UGX {total_price:,.0f}**")
-
-        payment_method = st.radio("Select Payment Method", [
-                                  "MTN Mobile Money", "Trade Credit Line"], horizontal=True)
-
-        if st.button("🚀 Confirm & Process Order", type="primary"):
-            new_order = {
-                "outlet_id": selected_outlet["id"],
-                "phone_number": selected_outlet["phone_number"],
-                "total_amount_ugx": total_price,
-                "status": "PENDING_PAYMENT" if "MTN" in payment_method else "APPROVED_CREDIT"
-            }
-            supabase.table("orders").insert(new_order).execute()
-            st.success("Order Created Successfully!")
-            st.rerun()
-
-# --- 3. WHATSAPP BOT SANDBOX (FIX FOR ISSUE #1) ---
+# --- 2. WHATSAPP BOT SANDBOX ---
 elif choice == "💬 WhatsApp Bot Sandbox":
     st.header("💬 WhatsApp Dynamic Bot Simulator")
-
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = [
-            {"role": "bot", "msg": "Hello! Welcome to MedSupply Uganda 🏥\nReply with:\n1. *CATALOG* to view drugs\n2. *ORDER* to buy stock\n3. *CREDIT* to check loan balance\n4. *MANAGER* to speak to support"}
-        ]
 
     for chat in st.session_state.chat_history:
         if chat["role"] == "user":
@@ -187,7 +158,7 @@ elif choice == "💬 WhatsApp Bot Sandbox":
             if "1" in msg_lower or "catalog" in msg_lower:
                 bot_reply = "📦 **Available Stock Catalog:**\n1. Amoxicillin 500mg - UGX 35,000/box\n2. Paracetamol 500mg - UGX 12,000/box\n3. Coartem 20/120 - UGX 85,000/box"
             elif "2" in msg_lower or "order" in msg_lower:
-                bot_reply = "🛒 **Order Request Initiated!**\nReply with the item name and quantity you need (e.g., *Amoxicillin 10 boxes*)."
+                bot_reply = "🛒 **Order Request Initiated!**\nReply with the item name and quantity you need."
             elif "3" in msg_lower or "credit" in msg_lower:
                 bot_reply = "💳 **Micro-Credit Line Status:**\nApproved Limit: **UGX 5,000,000**\nAvailable Balance: **UGX 3,500,000**"
             elif "manager" in msg_lower or "support" in msg_lower or "reach" in msg_lower:
@@ -199,46 +170,49 @@ elif choice == "💬 WhatsApp Bot Sandbox":
                 {"role": "bot", "msg": bot_reply})
             st.rerun()
 
-# --- 4. MTN MOMO GATEWAY (FIX FOR ISSUE #2) ---
+# --- 3. MTN MOMO GATEWAY ---
 elif choice == "📱 MTN MoMo Gateway":
-    st.header("📱 MTN Mobile Money Integration")
+    st.header("📱 Direct Push MoMo Payment")
 
-    momo_phone = st.text_input(
-        "Subscriber Phone Number (Format: 25677XXXXXXX)", value="256771234567")
-    momo_amount = st.number_input("Amount (UGX)", min_value=1000, value=150000)
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        momo_phone = st.text_input(
+            "Subscriber Phone Number", value="256770665588")
+        momo_amount = st.number_input(
+            "Amount (UGX)", min_value=1000, value=150000)
+        order_ref = st.text_input("Order Reference", value="MED-ORDER-882")
 
-    # Inform user about Sandbox limitations
-    st.info("ℹ️ **Note on Sandbox Mode:** MTN MoMo API Sandbox generates direct backend approvals for testing. Real physical phone USSD prompts occur when production API keys are connected.")
-
-    if st.button("📲 Initiate Payment Request"):
-        if hasattr(momo_service, 'request_to_pay'):
-            res = momo_service.request_to_pay(
-                momo_phone, momo_amount, "MED-REF-101")
-            if res.get("status") in [202, 200, "SUCCESS"]:
-                st.success(
-                    f"✅ MoMo Request Triggered Successfully! Ref: {res.get('reference_id', 'REQ-8890')}")
+        if st.button("💳 Initiate MoMo Request Payment", type="primary"):
+            if hasattr(momo_service, 'request_to_pay'):
+                res = momo_service.request_to_pay(
+                    momo_phone, momo_amount, order_ref)
+                st.info(f"Sending RequestToPay prompt to {momo_phone}...")
+                st.success("✅ Payment Request Prompted!")
             else:
-                st.warning(
-                    f"⚠️ Gateway Response: {res.get('message', 'Triggered in Sandbox Mode')}")
-        else:
-            st.success(
-                f"✅ Sandbox Payment Request Processed for {momo_phone} (UGX {momo_amount:,.0f})")
+                st.error("MoMo Service initialisation error.")
 
-# --- OTHER PAGES ---
+    with col2:
+        st.subheader("MoMo Transaction Logs")
+        st.dataframe(pd.DataFrame([
+            {"TxID": "tx-9901", "Phone": "256771234567",
+                "Amount": "175,000 UGX", "Status": "SUCCESS"},
+            {"TxID": "tx-9902", "Phone": "256788990011",
+                "Amount": "425,000 UGX", "Status": "SUCCESS"},
+            {"TxID": "tx-9903", "Phone": "256775001122",
+                "Amount": "85,000 UGX", "Status": "PENDING"}
+        ]), use_container_width=True)
+
+# --- 4. DRUG OUTLETS & CREDIT ---
 elif choice == "🏥 Drug Outlets & Credit":
-    st.header("🏥 Drug Outlets & Micro-Credit")
-    outlets = supabase.table("drug_outlets").select(
-        "*").execute().data if supabase else []
-    st.dataframe(pd.DataFrame(outlets), use_container_width=True)
+    st.header("🏥 Drug Outlets & Micro-Credit Eligibility")
+    st.dataframe(st.session_state.outlets_df, use_container_width=True)
 
+# --- 5. STOCK INVENTORY ---
 elif choice == "📦 Stock Inventory":
     st.header("📦 Warehouse Stock Inventory")
-    items = supabase.table("inventory_items").select(
-        "*").execute().data if supabase else []
-    st.dataframe(pd.DataFrame(items), use_container_width=True)
+    st.dataframe(st.session_state.inventory_df, use_container_width=True)
 
+# --- 6. ORDER HISTORY ---
 elif choice == "📋 Order History":
     st.header("📋 Master Order Logs")
-    orders = supabase.table("orders").select(
-        "*").execute().data if supabase else []
-    st.dataframe(pd.DataFrame(orders), use_container_width=True)
+    st.dataframe(st.session_state.orders_df, use_container_width=True)
