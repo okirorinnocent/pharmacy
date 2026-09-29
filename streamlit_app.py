@@ -93,6 +93,9 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 3. SESSION STATE INITIALIZATION ---
+if "authenticated_user" not in st.session_state:
+    st.session_state.authenticated_user = None
+
 if "outlets_df" not in st.session_state:
     st.session_state.outlets_df = pd.DataFrame([
         {
@@ -202,21 +205,44 @@ def validate_uganda_phone(phone_str):
     return re.match(pattern, phone_str) is not None
 
 
-# --- 4. SIDEBAR NAVIGATION & ROLE ACCESS CONTROL ---
+# --- 4. SIDEBAR NAVIGATION & EMAIL AUTHENTICATION ---
+STAFF_EMAILS = ["okirorinnocent49@gmail.com"]
+
 with st.sidebar:
     st.image("https://img.icons8.com/color/96/medical-heart.png", width=60)
     st.title("MedSupply Uganda")
     st.caption("B2B Digital Pharma Platform")
     st.divider()
 
-    # Role Selector for Access Control
-    user_role = st.radio("👤 Select Portal View", [
-                         "Customer / Buyer", "Staff / Admin"], horizontal=True)
+    # User Authentication Block
+    st.subheader("🔐 User Login")
+    user_email_input = st.text_input(
+        "Enter Account Email",
+        value=st.session_state.authenticated_user if st.session_state.authenticated_user else "",
+        placeholder="e.g. okirorinnocent49@gmail.com"
+    ).strip().lower()
+
+    if user_email_input:
+        st.session_state.authenticated_user = user_email_input
+        if user_email_input in STAFF_EMAILS:
+            user_role = "Staff / Admin"
+            st.success("👨‍⚕️ Logged in as **Staff / Operations Manager**")
+        else:
+            user_role = "Customer / Buyer"
+            st.info("🛒 Logged in as **Registered Customer**")
+    else:
+        user_role = "Customer / Buyer"
+        st.caption("ℹ️ Defaulting to **Customer / Buyer** view.")
+
     st.divider()
 
-    # Restrict Navigation Options based on Role
-    if user_role == "Customer / Buyer":
+    # Dynamic Menu Navigation based on verified Role
+    if user_role == "Staff / Admin":
         menu = [
+            "📦 Inventory Management",
+            "🚚 Seller Control Center",
+            "🏥 Outlets & Credit Lines",
+            "📋 Master Order Logs",
             "🛒 Place New Order",
             "🔔 Delivery Notifications",
             "💬 WhatsApp Assistant",
@@ -224,10 +250,6 @@ with st.sidebar:
         ]
     else:
         menu = [
-            "📦 Inventory Management",
-            "🚚 Seller Control Center",
-            "🏥 Outlets & Credit Lines",
-            "📋 Master Order Logs",
             "🛒 Place New Order",
             "🔔 Delivery Notifications",
             "💬 WhatsApp Assistant",
@@ -274,7 +296,7 @@ if choice == "🛒 Place New Order":
         item_row = st.session_state.inventory_df[st.session_state.inventory_df["Product Name"]
                                                  == selected_item_name].iloc[0]
 
-        # ROLE BASED PRIVACY: Customers see availability status, Staff see detailed stock & batches
+        # RESTRICTED VISIBILITY: Customers see only Availability; Staff sees complete stock & batches
         if user_role == "Staff / Admin":
             st.info(
                 f"📋 **Batch No:** `{item_row['Batch Number']}` | **Expiry:** `{item_row['Expiry Date']}` | **NDA Reg:** `{item_row['NDA Reg No']}` | **Stock:** `{item_row['Stock Quantity']}` units")
@@ -416,7 +438,6 @@ elif choice == "🔔 Delivery Notifications":
         ]
     df_display = df_display[df_display["Status"].isin(status_filter)]
 
-    # Filter columns for Customer view vs Staff view
     if user_role == "Customer / Buyer":
         customer_cols = ["OrderID", "Outlet", "Product Name", "Quantity",
                          "Total Amount (UGX)", "Payment Method", "Status", "Date"]
@@ -586,7 +607,7 @@ elif choice == "📱 Payment Gateways":
         st.write("**Account Number:** 9030012345678")
         st.write("**Branch:** Kampala Corporate Branch")
 
-# CHOICE: INVENTORY MANAGEMENT (STAFF ONLY WITH WORKING STOCK UPDATES)
+# CHOICE: INVENTORY MANAGEMENT (STAFF ONLY)
 elif choice == "📦 Inventory Management":
     st.header("📦 Warehouse Stock Management")
     st.caption(
@@ -601,23 +622,19 @@ elif choice == "📦 Inventory Management":
 
     st.subheader("Interactive Stock Editor")
 
-    # Callback to commit stock updates directly into st.session_state
     def update_inventory():
         edited_state = st.session_state["inventory_editor"]
 
-        # Apply updated cell edits
         for row_idx, changes in edited_state.get("edited_rows", {}).items():
             for col, value in changes.items():
                 st.session_state.inventory_df.at[row_idx, col] = value
 
-        # Apply newly added rows
         for new_row in edited_state.get("added_rows", []):
             st.session_state.inventory_df = pd.concat(
                 [st.session_state.inventory_df, pd.DataFrame([new_row])],
                 ignore_index=True
             )
 
-        # Apply deleted rows
         if edited_state.get("deleted_rows"):
             st.session_state.inventory_df = st.session_state.inventory_df.drop(
                 edited_state["deleted_rows"]
