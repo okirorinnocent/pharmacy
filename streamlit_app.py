@@ -1,28 +1,19 @@
-from app.services.credit_engine import credit_engine
-from app.config import settings
-from supabase import create_client
-import streamlit as st
 import pandas as pd
-import sys
-from pathlib import Path
+import streamlit as st
+from supabase import create_client
 
-# Line 1-6: Modify sys.path BEFORE any local imports
-ROOT_DIR = Path(__file__).resolve().parent
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
+# Direct imports from root directory files
+from config import settings
+from credit_engine import credit_engine
 
-# Standard library and third-party imports
-
-# Local project imports (MUST come after sys.path setup)
-
-# --- APP CONFIGURATION ---
+# --- STREAMLIT DASHBOARD PAGE CONFIGURATION ---
 st.set_page_config(
     page_title="MedSupply Uganda Dashboard",
     page_icon="🏥",
     layout="wide"
 )
 
-# Initialize Supabase Client
+# Initialize Supabase Sync Client for Streamlit
 supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
 
 st.title("🏥 MedSupply Uganda — Operations Dashboard")
