@@ -92,9 +92,13 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 3. SESSION STATE INITIALIZATION ---
-if "user_accounts" not in st.session_state:
-    st.session_state.user_accounts = {
+# --- 3. GLOBAL SHARED STATE INITIALIZATION (REALTIME MULTI-USER) ---
+
+
+@st.cache_resource
+def get_global_database():
+    """Returns persistent data shared across ALL connected browser sessions/users."""
+    user_accounts = {
         "okirorinnocent49@gmail.com": {
             "password": "admin",
             "business_name": "MedSupply HQ",
@@ -113,11 +117,7 @@ if "user_accounts" not in st.session_state:
         }
     }
 
-if "current_user" not in st.session_state:
-    st.session_state.current_user = None
-
-if "outlets_df" not in st.session_state:
-    st.session_state.outlets_df = pd.DataFrame([
+    outlets_df = pd.DataFrame([
         {
             "ID": "OUT-101",
             "Business Name": "Kampala Care Pharmacy",
@@ -142,8 +142,7 @@ if "outlets_df" not in st.session_state:
         }
     ])
 
-if "inventory_df" not in st.session_state:
-    st.session_state.inventory_df = pd.DataFrame([
+    inventory_df = pd.DataFrame([
         {
             "Item ID": "INV-001",
             "Product Name": "Amoxicillin 500mg (Box of 100)",
@@ -176,8 +175,7 @@ if "inventory_df" not in st.session_state:
         }
     ])
 
-if "orders_df" not in st.session_state:
-    st.session_state.orders_df = pd.DataFrame([
+    orders_df = pd.DataFrame([
         {
             "OrderID": "ORD-9901",
             "Outlet": "Kampala Care Pharmacy",
@@ -210,6 +208,21 @@ if "orders_df" not in st.session_state:
         }
     ])
 
+    return {
+        "users": user_accounts,
+        "outlets": outlets_df,
+        "inventory": inventory_df,
+        "orders": orders_df
+    }
+
+
+# Load the shared memory database
+db = get_global_database()
+
+# Session-specific state (isolated per tab)
+if "current_user" not in st.session_state:
+    st.session_state.current_user = None
+
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = [
         {
@@ -234,7 +247,7 @@ with st.sidebar:
 
     # User Account Status Indicator
     if st.session_state.current_user:
-        user_info = st.session_state.user_accounts[st.session_state.current_user]
+        user_info = db["users"][st.session_state.current_user]
         st.success(
             f"👤 **Logged in as:**\n{user_info['contact_name']}\n*({user_info['business_name']})*")
         if st.button("🚪 Log Out", type="secondary"):
@@ -248,7 +261,7 @@ with st.sidebar:
     # Determine user role
     user_role = "Guest"
     if st.session_state.current_user:
-        user_role = st.session_state.user_accounts[st.session_state.current_user]["role"]
+        user_role = db["users"][st.session_state.current_user]["role"]
 
     # Dynamic Menu Options
     if user_role == "Staff / Admin":
@@ -280,8 +293,8 @@ with st.sidebar:
 
     choice = st.selectbox("Navigation Menu", menu)
 
-    unread_count = len(st.session_state.orders_df[st.session_state.orders_df["Status"].isin(
-        ["Arrived", "Delivered"])])
+    unread_count = len(
+        db["orders"][db["orders"]["Status"].isin(["Arrived", "Delivered"])])
     if unread_count > 0:
         st.success(f"🔔 **{unread_count} Order(s) Delivered!**")
 
@@ -309,11 +322,11 @@ if choice == "🔐 Account Portal":
         if submit_login:
             if not login_email or not login_pass:
                 st.error("⚠️ Please fill in both email and password.")
-            elif login_email in st.session_state.user_accounts:
-                if st.session_state.user_accounts[login_email]["password"] == login_pass:
+            elif login_email in db["users"]:
+                if db["users"][login_email]["password"] == login_pass:
                     st.session_state.current_user = login_email
                     st.success(
-                        f"Welcome back, {st.session_state.user_accounts[login_email]['contact_name']}!")
+                        f"Welcome back, {db['users'][login_email]['contact_name']}!")
                     st.rerun()
                 else:
                     st.error("❌ Incorrect password. Please try again.")
@@ -321,7 +334,7 @@ if choice == "🔐 Account Portal":
                 st.error(
                     "❌ Account not found. Please register first under 'Create New Account'.")
 
-    # --- 2. SIGNUP TAB (FIXED WITH ST.FORM) ---
+    # --- 2. SIGNUP TAB ---
     with tab_signup:
         st.subheader("Register Pharmacy / Clinic Account")
 
@@ -353,15 +366,14 @@ if choice == "🔐 Account Portal":
             elif not validate_uganda_phone(new_phone):
                 st.error(
                     "⚠️ Invalid Ugandan Phone Format! Ensure it starts with `+256` followed by 9 digits (e.g., +256770665588).")
-            elif new_email in st.session_state.user_accounts:
+            elif new_email in db["users"]:
                 st.error(
                     "⚠️ An account with this email already exists. Please log in.")
             else:
-                # Determine role based on email
                 assigned_role = "Staff / Admin" if new_email == "okirorinnocent49@gmail.com" else "Customer / Buyer"
 
-                # Save to memory
-                st.session_state.user_accounts[new_email] = {
+                # Save account across shared state
+                db["users"][new_email] = {
                     "password": new_pass,
                     "business_name": new_biz,
                     "contact_name": new_name,
@@ -370,7 +382,6 @@ if choice == "🔐 Account Portal":
                     "role": assigned_role
                 }
 
-                # Add to outlets DataFrame
                 new_outlet = {
                     "ID": f"OUT-{uuid.uuid4().hex[:3].upper()}",
                     "Business Name": new_biz,
@@ -382,10 +393,9 @@ if choice == "🔐 Account Portal":
                     "Used Credit (UGX)": 0,
                     "Status": "Active"
                 }
-                st.session_state.outlets_df = pd.concat(
-                    [pd.DataFrame([new_outlet]), st.session_state.outlets_df], ignore_index=True)
+                db["outlets"] = pd.concat(
+                    [pd.DataFrame([new_outlet]), db["outlets"]], ignore_index=True)
 
-                # Set user state & refresh
                 st.session_state.current_user = new_email
                 st.success(
                     "🎉 Account successfully registered! You are now logged in.")
@@ -400,7 +410,7 @@ elif choice == "🛒 Place New Order":
             "🔒 **Authentication Required:** You must log in or register an account before placing an order.")
         st.info("Please navigate to **🔐 Account Portal** in the sidebar to proceed.")
     else:
-        user_info = st.session_state.user_accounts[st.session_state.current_user]
+        user_info = db["users"][st.session_state.current_user]
 
         col_a, col_b = st.columns(2, gap="medium")
 
@@ -410,18 +420,18 @@ elif choice == "🛒 Place New Order":
                 "Registered Outlet", value=user_info["business_name"], disabled=True)
 
             category_filter = st.selectbox("Filter Category", [
-                                           "All"] + list(st.session_state.inventory_df["Category"].unique()))
+                                           "All"] + list(db["inventory"]["Category"].unique()))
 
             if category_filter != "All":
-                filtered_inv = st.session_state.inventory_df[
-                    st.session_state.inventory_df["Category"] == category_filter]
+                filtered_inv = db["inventory"][db["inventory"]
+                                               ["Category"] == category_filter]
             else:
-                filtered_inv = st.session_state.inventory_df
+                filtered_inv = db["inventory"]
 
             selected_item_name = st.selectbox(
                 "Select Product", filtered_inv["Product Name"].tolist())
-            item_row = st.session_state.inventory_df[st.session_state.inventory_df["Product Name"]
-                                                     == selected_item_name].iloc[0]
+            item_row = db["inventory"][db["inventory"]
+                                       ["Product Name"] == selected_item_name].iloc[0]
 
             if user_role == "Staff / Admin":
                 st.info(
@@ -478,11 +488,11 @@ elif choice == "🛒 Place New Order":
                 st.error(
                     "⚠️ Invalid Ugandan Phone Format! Ensure it starts with `+256` followed by 9 digits.")
             elif quantity > item_row["Stock Quantity"]:
-                st.error(
-                    "❌ Order quantity exceeds available warehouse stock. Please contact support or reduce quantity.")
+                st.error("❌ Order quantity exceeds available warehouse stock.")
             else:
-                st.session_state.inventory_df.loc[
-                    st.session_state.inventory_df["Product Name"] == selected_item_name, "Stock Quantity"
+                # Deduct stock in global shared memory
+                db["inventory"].loc[
+                    db["inventory"]["Product Name"] == selected_item_name, "Stock Quantity"
                 ] -= quantity
 
                 order_id = f"ORD-{uuid.uuid4().hex[:4].upper()}"
@@ -502,25 +512,27 @@ elif choice == "🛒 Place New Order":
                     "Dispatch Time": "Pending",
                     "Delivery Time": "Pending"
                 }
-                st.session_state.orders_df = pd.concat(
-                    [pd.DataFrame([new_order]), st.session_state.orders_df], ignore_index=True)
+
+                # Push order to global shared state so ALL users see it immediately
+                db["orders"] = pd.concat(
+                    [pd.DataFrame([new_order]), db["orders"]], ignore_index=True)
 
                 if payment_method == "Trade Credit Line":
-                    st.session_state.outlets_df.loc[
-                        st.session_state.outlets_df["Business Name"] == user_info[
+                    db["outlets"].loc[
+                        db["outlets"]["Business Name"] == user_info[
                             "business_name"], "Used Credit (UGX)"
                     ] += total_price
 
                 st.success(
-                    f"✅ Order **{order_id}** successfully recorded! Delivery alerts routed to **{recipient_name} ({recipient_phone})**.")
+                    f"✅ Order **{order_id}** recorded! Realtime delivery alerts routed to **{recipient_name} ({recipient_phone})**.")
 
 # CHOICE: DELIVERY NOTIFICATIONS
 elif choice == "🔔 Delivery Notifications":
     st.header("🔔 Live Delivery Notifications & Order Tracker")
     st.caption("Real-time updates sent to recipients upon order fulfillment.")
 
-    delivered_orders = st.session_state.orders_df[st.session_state.orders_df["Status"].isin([
-                                                  "Arrived", "Delivered"])]
+    delivered_orders = db["orders"][db["orders"]
+                                    ["Status"].isin(["Arrived", "Delivered"])]
 
     if not delivered_orders.empty:
         for _, order in delivered_orders.iterrows():
@@ -555,7 +567,7 @@ elif choice == "🔔 Delivery Notifications":
     status_filter = st.multiselect("Filter by Status", options=[
                                    "Processing", "Dispatched", "Delivered"], default=["Processing", "Dispatched", "Delivered"])
 
-    df_display = st.session_state.orders_df.copy()
+    df_display = db["orders"].copy()
     if search_q:
         df_display = df_display[
             df_display["OrderID"].str.contains(search_q, case=False) |
@@ -571,50 +583,59 @@ elif choice == "🔔 Delivery Notifications":
     else:
         st.dataframe(df_display, use_container_width=True)
 
-# CHOICE: SELLER CONTROL CENTER (STAFF ONLY)
+# CHOICE: SELLER CONTROL CENTER (STAFF ONLY) - WITH REALTIME AUTO-REFRESH
 elif choice == "🚚 Seller Control Center":
     st.header("🚚 Seller Dashboard: Dispatch & Delivery Trigger")
     st.caption(
-        "Manage B2B order fulfillments, upload Proof of Delivery (POD), and update delivery statuses.")
+        "Manage B2B order fulfillments in real time. (Auto-refreshes every 5 seconds)")
 
-    search_term = st.text_input(
-        "Search Pending Shipments", placeholder="Enter Order ID or Facility Name...")
+    @st.fragment(run_every=5)
+    def render_live_seller_dashboard():
+        search_term = st.text_input(
+            "Search Pending Shipments", placeholder="Enter Order ID or Facility Name...", key="seller_search")
 
-    orders_to_show = st.session_state.orders_df.copy()
-    if search_term:
-        orders_to_show = orders_to_show[
-            orders_to_show["OrderID"].str.contains(search_term, case=False) |
-            orders_to_show["Outlet"].str.contains(search_term, case=False)
-        ]
+        orders_to_show = db["orders"].copy()
+        if search_term:
+            orders_to_show = orders_to_show[
+                orders_to_show["OrderID"].str.contains(search_term, case=False) |
+                orders_to_show["Outlet"].str.contains(search_term, case=False)
+            ]
 
-    for idx, row in orders_to_show.iterrows():
-        with st.container():
-            st.markdown(
-                f"##### Order ID: `{row['OrderID']}` — {row['Outlet']}")
-            col1, col2, col3 = st.columns([2, 2, 2])
+        for idx, row in orders_to_show.iterrows():
+            with st.container():
+                st.markdown(
+                    f"##### Order ID: `{row['OrderID']}` — {row['Outlet']}")
+                col1, col2, col3 = st.columns([2, 2, 2])
 
-            col1.write(
-                f"👤 **Recipient:** {row['Recipient Name']}\n📞 {row['Recipient Phone']}")
-            col2.write(
-                f"📦 **Item:** {row['Product Name']}\n💰 **Total:** UGX {row['Total Amount (UGX)']:,.0f}")
-            col3.write(
-                f"Status: **{row['Status']}**\nDispatch Time: *{row['Dispatch Time']}*")
+                col1.write(
+                    f"👤 **Recipient:** {row['Recipient Name']}\n📞 {row['Recipient Phone']}")
+                col2.write(
+                    f"📦 **Item:** {row['Product Name']}\n💰 **Total:** UGX {row['Total Amount (UGX)']:,.0f}")
+                col3.write(
+                    f"Status: **{row['Status']}**\nDispatch Time: *{row['Dispatch Time']}*")
 
-            if row["Status"] != "Delivered":
-                pod_file = st.file_uploader(f"Upload POD Image ({row['OrderID']})", type=[
-                                            "png", "jpg", "pdf"], key=f"file_{row['OrderID']}")
+                if row["Status"] != "Delivered":
+                    st.file_uploader(f"Upload POD Image ({row['OrderID']})", type=[
+                                     "png", "jpg", "pdf"], key=f"file_{row['OrderID']}")
 
-                if st.button(f"🚚 Trigger Delivered", key=f"deliv_btn_{row['OrderID']}", type="primary"):
-                    now_str = datetime.datetime.now().strftime("%Y-%m-%d %I:%M %p")
-                    st.session_state.orders_df.at[idx, "Status"] = "Delivered"
-                    st.session_state.orders_df.at[idx,
-                                                  "Delivery Time"] = now_str
-                    st.success(
-                        f"Delivery notification triggered and dispatched to {row['Recipient Name']} ({row['Recipient Phone']}) at {now_str}!")
-                    st.rerun()
-            else:
-                st.write(f"✅ **Delivery Confirmed at {row['Delivery Time']}**")
-            st.divider()
+                    if st.button(f"🚚 Trigger Delivered", key=f"deliv_btn_{row['OrderID']}", type="primary"):
+                        now_str = datetime.datetime.now().strftime("%Y-%m-%d %I:%M %p")
+
+                        # Update global database
+                        real_idx = db["orders"][db["orders"]
+                                                ["OrderID"] == row["OrderID"]].index[0]
+                        db["orders"].at[real_idx, "Status"] = "Delivered"
+                        db["orders"].at[real_idx, "Delivery Time"] = now_str
+
+                        st.success(
+                            f"Delivery triggered and dispatched to {row['Recipient Name']} ({row['Recipient Phone']}) at {now_str}!")
+                        st.rerun()
+                else:
+                    st.write(
+                        f"✅ **Delivery Confirmed at {row['Delivery Time']}**")
+                st.divider()
+
+    render_live_seller_dashboard()
 
 # CHOICE: WHATSAPP ASSISTANT
 elif choice == "💬 WhatsApp Assistant":
@@ -673,10 +694,10 @@ elif choice == "💬 WhatsApp Assistant":
                 bot_reply = "👤 **Manager Contact Details:**\n\n• **Name:** Okiror Innocent\n• **Phone:** +256763212490\n• **Role:** Operations & Credit Manager"
             elif "price" in msg_lower or "cost" in msg_lower or "catalog" in msg_lower:
                 items_str = "\n".join(
-                    [f"• **{r['Product Name']}**: UGX {r['Unit Price (UGX)']:,.0f}" for _, r in st.session_state.inventory_df.iterrows()])
+                    [f"• **{r['Product Name']}**: UGX {r['Unit Price (UGX)']:,.0f}" for _, r in db["inventory"].iterrows()])
                 bot_reply = f"💰 **Wholesale Catalog & Prices:**\n\n{items_str}"
             elif "status" in msg_lower or "track" in msg_lower:
-                recent = st.session_state.orders_df.head(3)
+                recent = db["orders"].head(3)
                 orders_str = "\n".join(
                     [f"• **{r['OrderID']}** ({r['Outlet']}): {r['Status']}" for _, r in recent.iterrows()])
                 bot_reply = f"🚚 **Recent Order Tracking Status:**\n\n{orders_str}"
@@ -739,7 +760,7 @@ elif choice == "📦 Inventory Management":
     st.caption(
         "Use inline editing to update live inventory stock counts, unit pricing, or batch details.")
 
-    low_stock = st.session_state.inventory_df[st.session_state.inventory_df["Stock Quantity"] < 200]
+    low_stock = db["inventory"][db["inventory"]["Stock Quantity"] < 200]
     if not low_stock.empty:
         for _, row in low_stock.iterrows():
             st.warning(
@@ -752,21 +773,21 @@ elif choice == "📦 Inventory Management":
 
         for row_idx, changes in edited_state.get("edited_rows", {}).items():
             for col, value in changes.items():
-                st.session_state.inventory_df.at[row_idx, col] = value
+                db["inventory"].at[row_idx, col] = value
 
         for new_row in edited_state.get("added_rows", []):
-            st.session_state.inventory_df = pd.concat(
-                [st.session_state.inventory_df, pd.DataFrame([new_row])],
+            db["inventory"] = pd.concat(
+                [db["inventory"], pd.DataFrame([new_row])],
                 ignore_index=True
             )
 
         if edited_state.get("deleted_rows"):
-            st.session_state.inventory_df = st.session_state.inventory_df.drop(
+            db["inventory"] = db["inventory"].drop(
                 edited_state["deleted_rows"]
             ).reset_index(drop=True)
 
     st.data_editor(
-        st.session_state.inventory_df,
+        db["inventory"],
         column_config={
             "Item ID": st.column_config.TextColumn("Item ID", required=True),
             "Product Name": st.column_config.TextColumn("Product Name", required=True),
@@ -787,7 +808,7 @@ elif choice == "📦 Inventory Management":
 elif choice == "🏥 Outlets & Credit Lines":
     st.header("🏥 Registered Outlets & Credit Facilities")
 
-    for _, row in st.session_state.outlets_df.iterrows():
+    for _, row in db["outlets"].iterrows():
         used = row["Used Credit (UGX)"]
         limit = row["Credit Limit (UGX)"]
         utilization = min(used / limit, 1.0)
@@ -798,30 +819,34 @@ elif choice == "🏥 Outlets & Credit Lines":
             st.write(f"**Credit Usage:** UGX {used:,.0f} / UGX {limit:,.0f}")
             st.progress(utilization)
             if utilization > 0.8:
-                st.warning("⚠️ High Credit Utilization Warning (>80%)")
+                st.warning("⚠️️ High Credit Utilization Warning (>80%)")
 
-# CHOICE: MASTER ORDER LOGS (STAFF ONLY)
+# CHOICE: MASTER ORDER LOGS (STAFF ONLY) - WITH REALTIME AUTO-REFRESH
 elif choice == "📋 Master Order Logs":
     st.header("📋 Master Order Logs & Executive Analytics")
 
-    kpi1, kpi2, kpi3 = st.columns(3)
-    total_rev = st.session_state.orders_df["Total Amount (UGX)"].sum()
-    total_orders = len(st.session_state.orders_df)
-    pending_count = len(
-        st.session_state.orders_df[st.session_state.orders_df["Status"] == "Processing"])
+    @st.fragment(run_every=5)
+    def render_live_master_logs():
+        kpi1, kpi2, kpi3 = st.columns(3)
+        total_rev = db["orders"]["Total Amount (UGX)"].sum()
+        total_orders = len(db["orders"])
+        pending_count = len(
+            db["orders"][db["orders"]["Status"] == "Processing"])
 
-    kpi1.metric("Total Platform Revenue", f"UGX {total_rev:,.0f}")
-    kpi2.metric("Total Orders Processed", total_orders)
-    kpi3.metric("Pending Fulfillment", pending_count)
+        kpi1.metric("Total Platform Revenue", f"UGX {total_rev:,.0f}")
+        kpi2.metric("Total Orders Processed", total_orders)
+        kpi3.metric("Pending Fulfillment", pending_count)
 
-    st.divider()
+        st.divider()
 
-    csv_data = st.session_state.orders_df.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="📥 Export Master Logs to CSV",
-        data=csv_data,
-        file_name=f"medsupply_master_logs_{datetime.date.today()}.csv",
-        mime="text/csv"
-    )
+        csv_data = db["orders"].to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Export Master Logs to CSV",
+            data=csv_data,
+            file_name=f"medsupply_master_logs_{datetime.date.today()}.csv",
+            mime="text/csv"
+        )
 
-    st.dataframe(st.session_state.orders_df, use_container_width=True)
+        st.dataframe(db["orders"], use_container_width=True)
+
+    render_live_master_logs()
