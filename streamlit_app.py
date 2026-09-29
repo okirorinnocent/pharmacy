@@ -361,11 +361,12 @@ with st.sidebar:
 # CHOICE: ACCOUNT PORTAL
 if choice == "🔐 Account Portal":
     st.header("🔐 User Account Portal")
-    st.caption(
-        "Create an account or log in to manage orders, credit lines, and delivery tracking.")
+    st.caption("Create an account, log in, or recover forgotten credentials.")
 
-    tab_login, tab_signup = st.tabs(["🔑 Log In", "📝 Create New Account"])
+    tab_login, tab_signup, tab_reset = st.tabs(
+        ["🔑 Log In", "📝 Create New Account", "🔑 Reset Password"])
 
+    # --- 1. LOGIN TAB ---
     with tab_login:
         st.subheader("Login to Your Account")
         with st.form("login_form", clear_on_submit=False):
@@ -391,6 +392,7 @@ if choice == "🔐 Account Portal":
                 st.error(
                     "❌ Account not found. Please register first under 'Create New Account'.")
 
+    # --- 2. SIGNUP TAB ---
     with tab_signup:
         st.subheader("Register Pharmacy / Clinic Account")
 
@@ -455,6 +457,41 @@ if choice == "🔐 Account Portal":
                 st.success(
                     "🎉 Account successfully registered! You are now logged in.")
                 st.rerun()
+
+    # --- 3. PASSWORD RECOVERY TAB ---
+    with tab_reset:
+        st.subheader("Reset Forgotten Password")
+        st.caption(
+            "Verify your registered email and phone number to create a new password.")
+
+        with st.form("reset_form", clear_on_submit=False):
+            reset_email = st.text_input(
+                "Registered Email Address *", key="reset_email_input").strip().lower()
+            reset_phone = st.text_input(
+                "Registered Phone Number (+256...) *", key="reset_phone_input").strip()
+            reset_new_pass = st.text_input(
+                "Enter New Password *", type="password", key="reset_pass_input")
+            reset_confirm_pass = st.text_input(
+                "Confirm New Password *", type="password", key="reset_confirm_pass_input")
+
+            submit_reset = st.form_submit_button(
+                "🔐 Reset Password", type="primary", use_container_width=True)
+
+        if submit_reset:
+            if not reset_email or not reset_phone or not reset_new_pass or not reset_confirm_pass:
+                st.error("⚠️ Please fill in all required fields.")
+            elif reset_new_pass != reset_confirm_pass:
+                st.error("❌ Passwords do not match. Please re-enter.")
+            elif reset_email not in db["users"]:
+                st.error("❌ Account not found. Verify your email address.")
+            elif db["users"][reset_email]["phone"].strip() != reset_phone:
+                st.error(
+                    "❌ Phone number does not match our records for this account.")
+            else:
+                # Update password in global state
+                db["users"][reset_email]["password"] = reset_new_pass
+                st.success(
+                    "✅ Password successfully updated! You can now log in under the 'Log In' tab.")
 
 # CHOICE: PLACE NEW ORDER
 elif choice == "🛒 Place New Order":
