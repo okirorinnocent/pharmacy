@@ -4,7 +4,7 @@ import uuid
 import datetime
 import re
 
-# --- PAGE CONFIGURATION ---
+# --- 1. PAGE CONFIGURATION ---
 st.set_page_config(
     page_title="MedSupply Uganda | B2B Pharma Platform",
     page_icon="💊",
@@ -12,7 +12,7 @@ st.set_page_config(
     initial_sidebar_state="auto"
 )
 
-# --- MODERN STYLING & HIGH-CONTRAST THEME ---
+# --- 2. CUSTOM STYLING & HIGH-CONTRAST THEME ---
 st.markdown("""
     <style>
     /* Global Background Theme */
@@ -22,7 +22,7 @@ st.markdown("""
         color: #F8FAFC;
     }
     
-    /* Responsive Content Container Padding to Prevent Sidebar Collision */
+    /* Layout Padding to Prevent Header Collisions */
     .main .block-container {
         padding-top: 2rem;
         padding-bottom: 3rem;
@@ -30,7 +30,7 @@ st.markdown("""
         padding-right: 2.5rem;
     }
     
-    /* WhatsApp Chat Styling */
+    /* WhatsApp Chat Bubble Styling */
     .chat-bubble-user {
         background-color: #059669;
         padding: 12px 16px;
@@ -62,7 +62,7 @@ st.markdown("""
         display: block;
     }
     
-    /* High-Contrast Notification Cards */
+    /* Notification Cards */
     .notification-card {
         padding: 1.25rem;
         border-radius: 12px;
@@ -89,19 +89,10 @@ st.markdown("""
     .status-delivered { background-color: #059669; color: #FFFFFF; }
     .status-dispatched { background-color: #D97706; color: #FFFFFF; }
     .status-processing { background-color: #2563EB; color: #FFFFFF; }
-    
-    /* Metric Cards */
-    .kpi-card {
-        background-color: #1E293B;
-        border: 1px solid #334155;
-        border-radius: 10px;
-        padding: 15px;
-        text-align: center;
-    }
     </style>
 """, unsafe_allow_html=True)
 
-# --- INITIALIZE SESSION STATE DATA ---
+# --- 3. SESSION STATE INITIALIZATION ---
 if "outlets_df" not in st.session_state:
     st.session_state.outlets_df = pd.DataFrame([
         {
@@ -128,6 +119,7 @@ if "outlets_df" not in st.session_state:
         }
     ])
 
+# FIXED: Expiry Date initialized as python datetime.date objects to prevent editor crashes
 if "inventory_df" not in st.session_state:
     st.session_state.inventory_df = pd.DataFrame([
         {
@@ -137,7 +129,7 @@ if "inventory_df" not in st.session_state:
             "Unit Price (UGX)": 35000,
             "Stock Quantity": 450,
             "Batch Number": "AMX-2026-09A",
-            "Expiry Date": "2028-06-30",
+            "Expiry Date": datetime.date(2028, 6, 30),
             "NDA Reg No": "NDA/UG/MED-4821"
         },
         {
@@ -145,9 +137,9 @@ if "inventory_df" not in st.session_state:
             "Product Name": "Paracetamol 500mg (Box of 100)",
             "Category": "Analgesics",
             "Unit Price (UGX)": 12000,
-            "Stock Quantity": 1200,
+            "Stock Quantity": 120,  # Below 200 threshold for low stock alert
             "Batch Number": "PAR-2026-01C",
-            "Expiry Date": "2027-12-15",
+            "Expiry Date": datetime.date(2027, 12, 15),
             "NDA Reg No": "NDA/UG/MED-1029"
         },
         {
@@ -157,7 +149,7 @@ if "inventory_df" not in st.session_state:
             "Unit Price (UGX)": 85000,
             "Stock Quantity": 180,
             "Batch Number": "CRT-2026-11B",
-            "Expiry Date": "2027-08-20",
+            "Expiry Date": datetime.date(2027, 8, 20),
             "NDA Reg No": "NDA/UG/MED-9930"
         }
     ])
@@ -205,7 +197,7 @@ if "chat_history" not in st.session_state:
         }
     ]
 
-# Helper function for Ugandan phone validation
+# Phone Validator Function
 
 
 def validate_uganda_phone(phone_str):
@@ -213,7 +205,7 @@ def validate_uganda_phone(phone_str):
     return re.match(pattern, phone_str) is not None
 
 
-# --- SIDEBAR NAVIGATION ---
+# --- 4. SIDEBAR NAVIGATION ---
 with st.sidebar:
     st.image("https://img.icons8.com/color/96/medical-heart.png", width=60)
     st.title("MedSupply Uganda")
@@ -237,7 +229,9 @@ with st.sidebar:
     if unread_count > 0:
         st.success(f"🔔 **{unread_count} Order(s) Delivered!**")
 
-# --- 1. PLACE NEW ORDER ---
+# --- 5. PAGE ROUTING ---
+
+# CHOICE 1: PLACE NEW ORDER
 if choice == "🛒 Place New Order":
     st.header("🛒 Place Order & Notification Setup")
     st.caption(
@@ -252,7 +246,6 @@ if choice == "🛒 Place New Order":
             st.session_state.outlets_df["Business Name"].tolist()
         )
 
-        # Get selected outlet data for auto-fill
         outlet_data = st.session_state.outlets_df[st.session_state.outlets_df["Business Name"]
                                                   == selected_outlet_name].iloc[0]
 
@@ -270,13 +263,11 @@ if choice == "🛒 Place New Order":
         item_row = st.session_state.inventory_df[st.session_state.inventory_df["Product Name"]
                                                  == selected_item_name].iloc[0]
 
-        # Display Pharma Regulatory Metadata
         st.info(
             f"📋 **Batch No:** `{item_row['Batch Number']}` | **Expiry:** `{item_row['Expiry Date']}` | **NDA Reg:** `{item_row['NDA Reg No']}`")
 
         quantity = st.number_input("Quantity (Boxes)", min_value=1, value=5)
 
-        # Calculate dynamic volume discounts
         discount = 0.0
         if quantity >= 50:
             discount = 0.10
@@ -324,7 +315,6 @@ if choice == "🛒 Place New Order":
             st.error(
                 f"❌ Insufficient stock. Only {item_row['Stock Quantity']} units available.")
         else:
-            # Deduct inventory stock
             st.session_state.inventory_df.loc[
                 st.session_state.inventory_df["Product Name"] == selected_item_name, "Stock Quantity"
             ] -= quantity
@@ -358,7 +348,7 @@ if choice == "🛒 Place New Order":
             st.success(
                 f"✅ Order **{order_id}** successfully recorded! Delivery alerts routed to **{recipient_name} ({recipient_phone})**.")
 
-# --- 2. DELIVERY NOTIFICATIONS & TRACKER ---
+# CHOICE 2: DELIVERY NOTIFICATIONS
 elif choice == "🔔 Delivery Notifications":
     st.header("🔔 Live Delivery Notifications & Order Tracker")
     st.caption(
@@ -378,7 +368,6 @@ elif choice == "🔔 Delivery Notifications":
                 </div>
             """, unsafe_allow_html=True)
 
-            # Action Buttons inside Alert Cards
             c1, c2, c3 = st.columns(3)
             with c1:
                 if st.button(f"📄 View Invoice / POD", key=f"pod_{order['OrderID']}"):
@@ -397,7 +386,6 @@ elif choice == "🔔 Delivery Notifications":
     st.divider()
     st.subheader("📦 Interactive All Orders Tracker")
 
-    # Global Filter Controls
     search_q = st.text_input("🔍 Search by Order ID, Outlet, or Recipient Name")
     status_filter = st.multiselect("Filter by Status", options=[
                                    "Processing", "Dispatched", "Delivered"], default=["Processing", "Dispatched", "Delivered"])
@@ -413,13 +401,12 @@ elif choice == "🔔 Delivery Notifications":
 
     st.dataframe(df_display, use_container_width=True)
 
-# --- 3. SELLER CONTROL CENTER ---
+# CHOICE 3: SELLER CONTROL CENTER
 elif choice == "🚚 Seller Control Center":
     st.header("🚚 Seller Dashboard: Dispatch & Delivery Trigger")
     st.caption(
         "Manage B2B order fulfillments, upload Proof of Delivery (POD), and update real-time delivery statuses.")
 
-    # Search & Filter
     search_term = st.text_input(
         "Search Pending Shipments", placeholder="Enter Order ID or Facility Name...")
 
@@ -459,7 +446,7 @@ elif choice == "🚚 Seller Control Center":
                 st.write(f"✅ **Delivery Confirmed at {row['Delivery Time']}**")
             st.divider()
 
-# --- 4. WHATSAPP ASSISTANT ---
+# CHOICE 4: WHATSAPP ASSISTANT
 elif choice == "💬 WhatsApp Assistant":
     st.header("💬 Professional WhatsApp Business Assistant")
 
@@ -488,7 +475,6 @@ elif choice == "💬 WhatsApp Assistant":
                     </div><div style="clear:both;"></div>
                 ''', unsafe_allow_html=True)
 
-        # Quick Action Chips
         st.write("**Quick Topics:**")
         c1, c2, c3, c4 = st.columns(4)
         quick_input = None
@@ -531,7 +517,7 @@ elif choice == "💬 WhatsApp Assistant":
                 {"role": "bot", "msg": bot_reply, "time": now_t})
             st.rerun()
 
-# --- 5. PAYMENT GATEWAYS ---
+# CHOICE 5: PAYMENT GATEWAYS
 elif choice == "📱 Payment Gateways":
     st.header("📱 B2B Payment Gateway Integration")
 
@@ -577,26 +563,47 @@ elif choice == "📱 Payment Gateways":
         st.write("**Account Number:** 9030012345678")
         st.write("**Branch:** Kampala Corporate Branch")
 
-# --- 6. INVENTORY MANAGEMENT ---
+# CHOICE 6: INVENTORY MANAGEMENT (ST.DATA_EDITOR FIXED)
 elif choice == "📦 Inventory Management":
     st.header("📦 Warehouse Stock Management")
     st.caption(
         "Use inline editing to update live inventory stock counts or unit pricing.")
 
+    # Low Stock Alerts Banner
+    low_stock = st.session_state.inventory_df[st.session_state.inventory_df["Stock Quantity"] < 200]
+    if not low_stock.empty:
+        for _, row in low_stock.iterrows():
+            st.warning(
+                f"⚠️ **Low Stock Alert:** `{row['Product Name']}` has only **{row['Stock Quantity']}** boxes left in stock!")
+
     st.subheader("Interactive Stock Editor")
+
+    # Safe DataFrame copy with date typing enforced
+    df_to_edit = st.session_state.inventory_df.copy()
+    if not pd.api.types.is_datetime64_any_dtype(df_to_edit["Expiry Date"]):
+        df_to_edit["Expiry Date"] = pd.to_datetime(
+            df_to_edit["Expiry Date"]).dt.date
+
     edited_df = st.data_editor(
-        st.session_state.inventory_df,
+        df_to_edit,
         column_config={
-            "Unit Price (UGX)": st.column_config.NumberColumn(format="UGX %d"),
-            "Stock Quantity": st.column_config.NumberColumn(min_value=0, max_value=10000),
-            "Expiry Date": st.column_config.DateColumn()
+            "Item ID": st.column_config.TextColumn("Item ID", required=True),
+            "Product Name": st.column_config.TextColumn("Product Name", required=True),
+            "Category": st.column_config.SelectboxColumn("Category", options=["Antibiotics", "Analgesics", "Antimalarial", "Medical Consumables"]),
+            "Unit Price (UGX)": st.column_config.NumberColumn("Unit Price (UGX)", min_value=0, format="UGX %d"),
+            "Stock Quantity": st.column_config.NumberColumn("Stock Quantity", min_value=0, step=1),
+            "Batch Number": st.column_config.TextColumn("Batch Number"),
+            "Expiry Date": st.column_config.DateColumn("Expiry Date", format="YYYY-MM-DD"),
+            "NDA Reg No": st.column_config.TextColumn("NDA Reg No")
         },
         use_container_width=True,
-        num_rows="dynamic"
+        num_rows="dynamic",
+        key="inventory_editor"
     )
+
     st.session_state.inventory_df = edited_df
 
-# --- 7. OUTLETS & CREDIT LINES ---
+# CHOICE 7: OUTLETS & CREDIT LINES
 elif choice == "🏥 Outlets & Credit Lines":
     st.header("🏥 Registered Outlets & Credit Facilities")
 
@@ -613,11 +620,10 @@ elif choice == "🏥 Outlets & Credit Lines":
             if utilization > 0.8:
                 st.warning("⚠️ High Credit Utilization Warning (>80%)")
 
-# --- 8. MASTER ORDER LOGS ---
+# CHOICE 8: MASTER ORDER LOGS
 elif choice == "📋 Master Order Logs":
     st.header("📋 Master Order Logs & Executive Analytics")
 
-    # Top Level KPI Summary Cards
     kpi1, kpi2, kpi3 = st.columns(3)
     total_rev = st.session_state.orders_df["Total Amount (UGX)"].sum()
     total_orders = len(st.session_state.orders_df)
