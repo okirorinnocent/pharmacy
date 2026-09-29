@@ -245,8 +245,8 @@ with st.sidebar:
     st.caption("B2B Digital Pharma Platform")
     st.divider()
 
-    # User Account Status Indicator
-    if st.session_state.current_user:
+    # User Account Status Indicator (Safeguarded against KeyError)
+    if st.session_state.current_user and st.session_state.current_user in db["users"]:
         user_info = db["users"][st.session_state.current_user]
         st.success(
             f"👤 **Logged in as:**\n{user_info['contact_name']}\n*({user_info['business_name']})*")
@@ -254,13 +254,14 @@ with st.sidebar:
             st.session_state.current_user = None
             st.rerun()
     else:
+        st.session_state.current_user = None  # Reset invalid session
         st.warning("🔒 **Not Logged In**\nSign up or log in to place orders.")
 
     st.divider()
 
-    # Determine user role
+    # Determine user role safely
     user_role = "Guest"
-    if st.session_state.current_user:
+    if st.session_state.current_user and st.session_state.current_user in db["users"]:
         user_role = db["users"][st.session_state.current_user]["role"]
 
     # Dynamic Menu Options
@@ -405,7 +406,7 @@ if choice == "🔐 Account Portal":
 elif choice == "🛒 Place New Order":
     st.header("🛒 Place Order & Notification Setup")
 
-    if not st.session_state.current_user:
+    if not st.session_state.current_user or st.session_state.current_user not in db["users"]:
         st.warning(
             "🔒 **Authentication Required:** You must log in or register an account before placing an order.")
         st.info("Please navigate to **🔐 Account Portal** in the sidebar to proceed.")
@@ -819,7 +820,7 @@ elif choice == "🏥 Outlets & Credit Lines":
             st.write(f"**Credit Usage:** UGX {used:,.0f} / UGX {limit:,.0f}")
             st.progress(utilization)
             if utilization > 0.8:
-                st.warning("⚠️️ High Credit Utilization Warning (>80%)")
+                st.warning("⚠️ High Credit Utilization Warning (>80%)")
 
 # CHOICE: MASTER ORDER LOGS (STAFF ONLY) - WITH REALTIME AUTO-REFRESH
 elif choice == "📋 Master Order Logs":
