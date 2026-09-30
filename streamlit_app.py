@@ -276,9 +276,9 @@ def get_global_database():
 # Load the shared memory database
 db = get_global_database()
 
-# Session-specific state
+# Persistent session state initialization
 if "current_user" not in st.session_state:
-    st.session_state.current_user = None
+    st.session_state["current_user"] = None
 
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = [
@@ -303,23 +303,22 @@ with st.sidebar:
     st.divider()
 
     # User Account Status Indicator
-    if st.session_state.current_user and st.session_state.current_user in db["users"]:
-        user_info = db["users"][st.session_state.current_user]
+    if st.session_state.get("current_user") and st.session_state["current_user"] in db["users"]:
+        user_info = db["users"][st.session_state["current_user"]]
         st.success(
             f"👤 **Logged in as:**\n{user_info['contact_name']}\n*({user_info['business_name']})*")
         if st.button("🚪 Log Out", type="secondary"):
-            st.session_state.current_user = None
+            st.session_state["current_user"] = None
             st.rerun()
     else:
-        st.session_state.current_user = None
         st.warning("🔒 **Not Logged In**\nSign up or log in to place orders.")
 
     st.divider()
 
     # Determine user role
     user_role = "Guest"
-    if st.session_state.current_user and st.session_state.current_user in db["users"]:
-        user_role = db["users"][st.session_state.current_user]["role"]
+    if st.session_state.get("current_user") and st.session_state["current_user"] in db["users"]:
+        user_role = db["users"][st.session_state["current_user"]]["role"]
 
     # Dynamic Menu Options
     if user_role == "Staff / Admin":
@@ -382,7 +381,7 @@ if choice == "🔐 Account Portal":
                 st.error("⚠️ Please fill in both email and password.")
             elif login_email in db["users"]:
                 if db["users"][login_email]["password"] == login_pass:
-                    st.session_state.current_user = login_email
+                    st.session_state["current_user"] = login_email
                     st.success(
                         f"Welcome back, {db['users'][login_email]['contact_name']}!")
                     st.rerun()
@@ -423,7 +422,7 @@ if choice == "🔐 Account Portal":
                 st.error("⚠️ Please fill in all required fields marked with *.")
             elif not validate_uganda_phone(new_phone):
                 st.error(
-                    "⚠️️ Invalid Ugandan Phone Format! Ensure it starts with `+256` followed by 9 digits.")
+                    "⚠️ Invalid Ugandan Phone Format! Ensure it starts with `+256` followed by 9 digits.")
             elif new_email in db["users"]:
                 st.error(
                     "⚠️ An account with this email already exists. Please log in.")
@@ -453,7 +452,7 @@ if choice == "🔐 Account Portal":
                 db["outlets"] = pd.concat(
                     [pd.DataFrame([new_outlet]), db["outlets"]], ignore_index=True)
 
-                st.session_state.current_user = new_email
+                st.session_state["current_user"] = new_email
                 st.success(
                     "🎉 Account successfully registered! You are now logged in.")
                 st.rerun()
@@ -488,7 +487,6 @@ if choice == "🔐 Account Portal":
                 st.error(
                     "❌ Phone number does not match our records for this account.")
             else:
-                # Update password in global state
                 db["users"][reset_email]["password"] = reset_new_pass
                 st.success(
                     "✅ Password successfully updated! You can now log in under the 'Log In' tab.")
@@ -497,12 +495,12 @@ if choice == "🔐 Account Portal":
 elif choice == "🛒 Place New Order":
     st.header("🛒 Place Order & Notification Setup")
 
-    if not st.session_state.current_user or st.session_state.current_user not in db["users"]:
+    if not st.session_state.get("current_user") or st.session_state["current_user"] not in db["users"]:
         st.warning(
             "🔒 **Authentication Required:** You must log in or register an account before placing an order.")
         st.info("Please navigate to **🔐 Account Portal** in the sidebar to proceed.")
     else:
-        user_info = db["users"][st.session_state.current_user]
+        user_info = db["users"][st.session_state["current_user"]]
 
         col_a, col_b = st.columns(2, gap="medium")
 
@@ -558,7 +556,7 @@ elif choice == "🛒 Place New Order":
             recipient_phone = st.text_input(
                 "Recipient WhatsApp Number (+256...)", value=user_info["phone"])
             recipient_email = st.text_input(
-                "Recipient Email Address", value=st.session_state.current_user)
+                "Recipient Email Address", value=st.session_state["current_user"])
 
         st.divider()
 
@@ -879,7 +877,7 @@ elif choice == "📱 Payment Gateways":
 elif choice == "📦 Inventory Management":
     st.header("📦 Warehouse Stock Management")
     st.caption(
-        "Use inline editing to update live inventory stock counts, unit pricing, or batch details.")
+        "Add stock, or edit live inventory counts, pricing, and batch details.")
 
     low_stock = db["inventory"][db["inventory"]["Stock Quantity"] < 200]
     if not low_stock.empty:
@@ -887,10 +885,55 @@ elif choice == "📦 Inventory Management":
             st.warning(
                 f"⚠️ **Low Stock Alert:** `{row['Product Name']}` has only **{row['Stock Quantity']}** boxes left in stock!")
 
+    # Direct Form to Add New Inventory Items
+    with st.expander("➕ Add New Item to Inventory", expanded=True):
+        with st.form("add_item_form", clear_on_submit=True):
+            c1, c2 = st.columns(2)
+            with c1:
+                item_id = st.text_input(
+                    "Item ID *", value=f"INV-{len(db['inventory'])+1:03d}")
+                prod_name = st.text_input(
+                    "Product Name *", placeholder="e.g. Ciprofloxacin 500mg")
+                category = st.selectbox(
+                    "Category *", ["Antibiotics", "Analgesics", "Antimalarial", "Medical Consumables"])
+                unit_price = st.number_input(
+                    "Unit Price (UGX) *", min_value=0, value=25000, step=1000)
+            with c2:
+                stock_qty = st.number_input(
+                    "Stock Quantity (Boxes) *", min_value=0, value=100, step=10)
+                batch_no = st.text_input(
+                    "Batch Number *", value=f"BAT-2026-{uuid.uuid4().hex[:3].upper()}")
+                exp_date = st.date_input(
+                    "Expiry Date *", value=datetime.date(2028, 1, 1))
+                nda_reg = st.text_input(
+                    "NDA Reg No *", value="NDA/UG/MED-1000")
+
+            add_submit = st.form_submit_button(
+                "📦 Save Item to Inventory", type="primary", use_container_width=True)
+
+            if add_submit:
+                if not prod_name or not item_id or not batch_no:
+                    st.error("⚠️️ Please fill in all required fields.")
+                else:
+                    new_item = {
+                        "Item ID": item_id,
+                        "Product Name": prod_name,
+                        "Category": category,
+                        "Unit Price (UGX)": unit_price,
+                        "Stock Quantity": stock_qty,
+                        "Batch Number": batch_no,
+                        "Expiry Date": exp_date,
+                        "NDA Reg No": nda_reg
+                    }
+                    db["inventory"] = pd.concat(
+                        [db["inventory"], pd.DataFrame([new_item])], ignore_index=True)
+                    st.success(
+                        f"✅ Item **{prod_name}** added to inventory successfully!")
+                    st.rerun()
+
     st.subheader("Interactive Stock Editor")
 
     def update_inventory():
-        # SAFELY ACCESS SESSION STATE TO PREVENT KEYERROR ON INITIAL RENDER
         edited_state = st.session_state.get("inventory_editor")
         if not edited_state:
             return
