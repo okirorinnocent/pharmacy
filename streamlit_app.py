@@ -16,7 +16,7 @@ st.set_page_config(
     initial_sidebar_state="auto"
 )
 
-# --- 2. CUSTOM STYLING & HIGH-CONTRAST THEME ---
+# --- 2. CUSTOM STYLING & ANIMATED HIGH-CONTRAST THEME ---
 st.markdown("""
     <style>
     /* Global Background Theme */
@@ -26,14 +26,48 @@ st.markdown("""
         color: #F8FAFC;
     }
     
-    /* Layout Padding to Prevent Header Collisions */
+    /* Keyframe Animations */
+    @keyframes pulse-glow {
+        0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+        70% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+    }
+
+    @keyframes badge-pulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.85; transform: scale(1.03); }
+    }
+
+    @keyframes slide-in-up {
+        from { transform: translateY(15px); opacity: 0; }
+        to { transform: translateY(0); opacity: 1; }
+    }
+
+    /* Layout Padding */
     .main .block-container {
         padding-top: 2rem;
         padding-bottom: 3rem;
         padding-left: 2.5rem;
         padding-right: 2.5rem;
+        animation: slide-in-up 0.4s ease-out;
     }
     
+    /* Animated Product/Item Cards (Jumia Style Hover) */
+    .product-card {
+        background: #1E293B;
+        border: 1px solid #334155;
+        border-radius: 12px;
+        padding: 1.25rem;
+        margin-bottom: 1rem;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+    }
+    .product-card:hover {
+        transform: translateY(-6px);
+        border-color: #10B981;
+        box-shadow: 0 12px 20px -5px rgba(16, 185, 129, 0.25);
+    }
+
     /* WhatsApp Chat Bubble Styling */
     .chat-bubble-user {
         background-color: #059669;
@@ -45,6 +79,7 @@ st.markdown("""
         font-size: 0.95rem;
         color: #FFFFFF;
         box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        animation: slide-in-up 0.2s ease-out;
     }
     .chat-bubble-bot {
         background-color: #1E293B;
@@ -58,6 +93,7 @@ st.markdown("""
         color: #F8FAFC;
         box-shadow: 0 2px 4px rgba(0,0,0,0.2);
         line-height: 1.5;
+        animation: slide-in-up 0.2s ease-out;
     }
     .chat-time {
         font-size: 0.7rem;
@@ -66,7 +102,7 @@ st.markdown("""
         display: block;
     }
     
-    /* Notification Cards */
+    /* Notification Cards with Glow Effect */
     .notification-card {
         padding: 1.25rem;
         border-radius: 12px;
@@ -74,14 +110,14 @@ st.markdown("""
         border-left: 6px solid #10B981;
         margin-bottom: 1.2rem;
         color: #FFFFFF;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+        animation: slide-in-up 0.3s ease-out, pulse-glow 3s infinite;
     }
     .notification-card h4 {
         color: #34D399;
         margin-bottom: 0.5rem;
     }
     
-    /* Status Badges */
+    /* Animated Status Badges */
     .status-badge {
         display: inline-block;
         padding: 4px 10px;
@@ -89,10 +125,21 @@ st.markdown("""
         font-size: 0.8rem;
         font-weight: 600;
         text-transform: uppercase;
+        animation: badge-pulse 2s infinite ease-in-out;
     }
     .status-delivered { background-color: #059669; color: #FFFFFF; }
     .status-dispatched { background-color: #D97706; color: #FFFFFF; }
     .status-processing { background-color: #2563EB; color: #FFFFFF; }
+
+    /* Streamlit Primary Button Custom Animation */
+    div.stButton > button[kind="primary"] {
+        transition: all 0.25s ease-in-out !important;
+        border-radius: 8px !important;
+    }
+    div.stButton > button[kind="primary"]:hover {
+        transform: scale(1.02) !important;
+        box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4) !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -583,6 +630,16 @@ elif choice == "🛒 Place New Order":
             item_row = db["inventory"][db["inventory"]
                                        ["Product Name"] == selected_item_name].iloc[0]
 
+            # Jumia Style Product Preview Card
+            st.markdown(f"""
+                <div class="product-card">
+                    <h4 style="color: #34D399; margin: 0 0 8px 0;">📦 {selected_item_name}</h4>
+                    <p style="margin: 0; font-size: 0.9rem; color: #94A3B8;">
+                        Category: <b>{item_row['Category']}</b> | Unit Price: <b style="color: #10B981;">UGX {item_row['Unit Price (UGX)']:,.0f}</b>
+                    </p>
+                </div>
+            """, unsafe_allow_html=True)
+
             if user_role == "Staff / Admin":
                 st.info(
                     f"📋 **Batch No:** `{item_row['Batch Number']}` | **Expiry:** `{item_row['Expiry Date']}` | **NDA Reg:** `{item_row['NDA Reg No']}` | **Stock:** `{item_row['Stock Quantity']}` units")
@@ -632,7 +689,7 @@ elif choice == "🛒 Place New Order":
         if st.button("🚀 Confirm Order & Register Recipient", type="primary", use_container_width=True):
             if not validate_uganda_phone(recipient_phone):
                 st.error(
-                    "⚠️️ Invalid Ugandan Phone Format! Ensure it starts with `+256` followed by 9 digits.")
+                    "⚠️ Invalid Ugandan Phone Format! Ensure it starts with `+256` followed by 9 digits.")
             elif quantity > item_row["Stock Quantity"]:
                 st.error("❌ Order quantity exceeds available warehouse stock.")
             else:
@@ -845,7 +902,7 @@ elif choice == "🚚 Seller Control Center":
                             real_idx = db["orders"][db["orders"]
                                                     ["OrderID"] == row["OrderID"]].index[0]
                             db["orders"].at[real_idx,
-                                            "Item Verified"] = "⚠️️ Wrong Item Flagged"
+                                            "Item Verified"] = "⚠️ Wrong Item Flagged"
                             st.error(
                                 f"Mismatch flagged for Order {row['OrderID']}!")
                             st.rerun()
