@@ -4,6 +4,7 @@ import uuid
 import datetime
 import re
 import smtplib
+import requests
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -153,6 +154,55 @@ def send_delivery_email(recipient_email, recipient_name, order_id, product_name,
         return True, f"Email successfully sent to {recipient_email}"
     except Exception as e:
         return False, f"Failed to send email to {recipient_email}: {str(e)}"
+
+
+# --- WHATSAPP INSTANT PUSH UTILITY ---
+def send_whatsapp_notification(recipient_phone, recipient_name, order_id, product_name, quantity, total_amount):
+    """Sends an automated WhatsApp notification via Meta WhatsApp Cloud API."""
+    try:
+        if "WHATSAPP_TOKEN" not in st.secrets or "WHATSAPP_PHONE_NUMBER_ID" not in st.secrets:
+            return False, "WhatsApp API credentials missing in secrets."
+
+        token = st.secrets["WHATSAPP_TOKEN"]
+        phone_number_id = st.secrets["WHATSAPP_PHONE_NUMBER_ID"]
+
+        # Clean phone number format for Meta API (digits only, no '+')
+        formatted_phone = recipient_phone.replace("+", "").strip()
+
+        url = f"https://graph.facebook.com/v18.0/{phone_number_id}/messages"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": formatted_phone,
+            "type": "text",
+            "text": {
+                "body": (
+                    f"📦 *MedSupply Uganda Notification*\n\n"
+                    f"Dear *{recipient_name}*,\n"
+                    f"Your order *{order_id}* status update:\n\n"
+                    f"• *Item:* {product_name} ({quantity} Boxes)\n"
+                    f"• *Total Amount:* UGX {total_amount:,.0f}\n\n"
+                    f"Log in to your portal for live tracking & delivery updates."
+                )
+            }
+        }
+
+        response = requests.post(url, headers=headers,
+                                 json=payload, timeout=10)
+        res_data = response.json()
+
+        if response.status_code == 200:
+            return True, f"WhatsApp alert sent to {recipient_phone}"
+        else:
+            err_msg = res_data.get("error", {}).get("message", "API Error")
+            return False, f"WhatsApp dispatch failed: {err_msg}"
+
+    except Exception as e:
+        return False, f"WhatsApp exception: {str(e)}"
 
 
 # --- 3. GLOBAL SHARED STATE INITIALIZATION ---
@@ -582,7 +632,7 @@ elif choice == "🛒 Place New Order":
         if st.button("🚀 Confirm Order & Register Recipient", type="primary", use_container_width=True):
             if not validate_uganda_phone(recipient_phone):
                 st.error(
-                    "⚠️ Invalid Ugandan Phone Format! Ensure it starts with `+256` followed by 9 digits.")
+                    "⚠️️ Invalid Ugandan Phone Format! Ensure it starts with `+256` followed by 9 digits.")
             elif quantity > item_row["Stock Quantity"]:
                 st.error("❌ Order quantity exceeds available warehouse stock.")
             else:
@@ -617,7 +667,7 @@ elif choice == "🛒 Place New Order":
                     db["outlets"].loc[db["outlets"]["Business Name"] ==
                                       user_info["business_name"], "Used Credit (UGX)"] += total_price
 
-                # --- TRIGGER ACTUAL EMAIL DISPATCH HERE ---
+                # --- TRIGGER EMAIL DISPATCH ---
                 exact_time_now = datetime.datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
                 email_sent, email_msg = send_delivery_email(
                     recipient_email=recipient_email,
@@ -629,12 +679,27 @@ elif choice == "🛒 Place New Order":
                     delivery_time=exact_time_now
                 )
 
+                # --- TRIGGER WHATSAPP INSTANT PUSH ---
+                wa_sent, wa_msg = send_whatsapp_notification(
+                    recipient_phone=recipient_phone,
+                    recipient_name=recipient_name,
+                    order_id=order_id,
+                    product_name=selected_item_name,
+                    quantity=quantity,
+                    total_amount=total_price
+                )
+
                 if email_sent:
                     st.success(
-                        f"✅ Order **{order_id}** recorded! Email notification successfully sent to **{recipient_email}**.")
+                        f"✅ Order **{order_id}** recorded! Email notification sent to **{recipient_email}**.")
                 else:
                     st.warning(
-                        f"✅ Order **{order_id}** recorded, but email dispatch failed:\n`{email_msg}`")
+                        f"✅ Order **{order_id}** recorded, but email failed:\n`{email_msg}`")
+
+                if wa_sent:
+                    st.info(f"📲 **WhatsApp Alert:** {wa_msg}")
+                else:
+                    st.caption(f"ℹ️ **WhatsApp Note:** {wa_msg}")
 
 # CHOICE: DELIVERY NOTIFICATIONS
 elif choice == "🔔 Delivery Notifications":
@@ -704,7 +769,7 @@ elif choice == "🔔 Delivery Notifications":
 elif choice == "🚚 Seller Control Center":
     st.header("🚚 Seller Dashboard: Dispatch & Delivery Trigger")
     st.caption(
-        "Manage B2B order fulfillments, track payments on delivery, and automatically email customers upon delivery.")
+        "Manage B2B order fulfillments, track payments on delivery, and automatically notify customers upon delivery.")
 
     @st.fragment(run_every=5)
     def render_live_seller_dashboard():
@@ -737,7 +802,7 @@ elif choice == "🚚 Seller Control Center":
 
                     col_btn1, col_btn2 = st.columns(2)
                     with col_btn1:
-                        if st.button(f"🚚 Trigger Delivered & Send Email", key=f"deliv_btn_{row['OrderID']}", type="primary"):
+                        if st.button(f"🚚 Trigger Delivered & Send Alerts", key=f"deliv_btn_{row['OrderID']}", type="primary"):
                             exact_time_now = datetime.datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
 
                             real_idx = db["orders"][db["orders"]
@@ -750,7 +815,7 @@ elif choice == "🚚 Seller Control Center":
                             db["orders"].at[real_idx,
                                             "Item Verified"] = "Verified Correct Item"
 
-                            # Trigger Automatic Email Dispatch to Customer
+                            # Trigger Automatic Email & WhatsApp Dispatch to Customer
                             email_sent, email_msg = send_delivery_email(
                                 recipient_email=row["Recipient Email"],
                                 recipient_name=row["Recipient Name"],
@@ -761,17 +826,26 @@ elif choice == "🚚 Seller Control Center":
                                 delivery_time=exact_time_now
                             )
 
+                            wa_sent, wa_msg = send_whatsapp_notification(
+                                recipient_phone=row["Recipient Phone"],
+                                recipient_name=row["Recipient Name"],
+                                order_id=row["OrderID"],
+                                product_name=row["Product Name"],
+                                quantity=row["Quantity"],
+                                total_amount=row["Total Amount (UGX)"]
+                            )
+
                             st.success(
                                 f"Delivery & Payment confirmed for {row['Recipient Name']} at {exact_time_now}!")
                             st.info(
-                                f"📧 **Automatic Notification:** {email_msg}")
+                                f"📧 **Email:** {email_msg} | 📲 **WhatsApp:** {wa_msg}")
                             st.rerun()
                     with col_btn2:
                         if st.button(f"❌ Detect Mismatch Item", key=f"mismatch_{row['OrderID']}"):
                             real_idx = db["orders"][db["orders"]
                                                     ["OrderID"] == row["OrderID"]].index[0]
                             db["orders"].at[real_idx,
-                                            "Item Verified"] = "⚠️ Wrong Item Flagged"
+                                            "Item Verified"] = "⚠️️ Wrong Item Flagged"
                             st.error(
                                 f"Mismatch flagged for Order {row['OrderID']}!")
                             st.rerun()
