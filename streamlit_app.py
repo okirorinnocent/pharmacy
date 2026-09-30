@@ -10,62 +10,118 @@ from email.mime.multipart import MIMEMultipart
 
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="MedSupply Uganda | B2B Pharma Platform",
+    page_title="MedSupply Uganda | Premier B2B Pharma Marketplace",
     page_icon="💊",
     layout="wide",
-    initial_sidebar_state="auto"
+    initial_sidebar_state="expanded"
 )
 
-# --- 2. CUSTOM STYLING & ANIMATED HIGH-CONTRAST THEME ---
+# --- 2. ADVANCED JUMIA-INSPIRED HIGH-CONTRAST CSS THEME ---
 st.markdown("""
     <style>
     /* Global Background Theme */
     .stApp {
-        background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
+        background: linear-gradient(135deg, #0B0F19 0%, #111827 100%);
         font-family: 'Inter', system-ui, -apple-system, sans-serif;
-        color: #F8FAFC;
+        color: #F9FAFB;
     }
     
-    /* Keyframe Animations */
-    @keyframes pulse-glow {
+    /* Smooth Entrance Keyframe Animations */
+    @keyframes slideUp {
+        from { transform: translateY(20px); opacity: 0; }
+        to { transform: translateY(0); opacity: 1; }
+    }
+    @keyframes pulseGlow {
         0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
-        70% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
+        70% { box-shadow: 0 0 0 12px rgba(16, 185, 129, 0); }
         100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
     }
 
-    @keyframes badge-pulse {
-        0%, 100% { opacity: 1; transform: scale(1); }
-        50% { opacity: 0.85; transform: scale(1.03); }
-    }
-
-    @keyframes slide-in-up {
-        from { transform: translateY(15px); opacity: 0; }
-        to { transform: translateY(0); opacity: 1; }
-    }
-
-    /* Layout Padding */
     .main .block-container {
-        padding-top: 2rem;
+        padding-top: 1.5rem;
         padding-bottom: 3rem;
-        padding-left: 2.5rem;
-        padding-right: 2.5rem;
-        animation: slide-in-up 0.4s ease-out;
+        padding-left: 2rem;
+        padding-right: 2rem;
+        animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
     }
-    
-    /* Animated Product/Item Cards (Jumia Style Hover) */
-    .product-card {
-        background: #1E293B;
-        border: 1px solid #334155;
-        border-radius: 12px;
+
+    /* Jumia Style Hero Banner Header */
+    .hero-container {
+        background: linear-gradient(135deg, #064E3B 0%, #022C22 100%);
+        border: 1px solid #059669;
+        border-radius: 16px;
+        padding: 2rem;
+        margin-bottom: 2rem;
+        box-shadow: 0 10px 25px -5px rgba(5, 150, 105, 0.25);
+    }
+    .hero-title {
+        color: #34D399;
+        font-size: 2.2rem;
+        font-weight: 800;
+        margin-bottom: 0.5rem;
+    }
+    .hero-subtitle {
+        color: #E5E7EB;
+        font-size: 1.05rem;
+        margin-bottom: 1.2rem;
+    }
+    .feature-badge {
+        display: inline-block;
+        background: rgba(16, 185, 129, 0.15);
+        border: 1px solid #10B981;
+        color: #6EE7B7;
+        padding: 6px 14px;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        margin-right: 8px;
+        margin-bottom: 8px;
+    }
+
+    /* E-Commerce Product Cards (Jumia Marketplace Style) */
+    .jumia-card {
+        background: #1F2937;
+        border: 1px solid #374151;
+        border-radius: 14px;
         padding: 1.25rem;
-        margin-bottom: 1rem;
+        margin-bottom: 1.2rem;
         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+        position: relative;
+        overflow: hidden;
     }
-    .product-card:hover {
-        transform: translateY(-6px);
+    .jumia-card:hover {
+        transform: translateY(-8px);
         border-color: #10B981;
-        box-shadow: 0 12px 20px -5px rgba(16, 185, 129, 0.25);
+        box-shadow: 0 14px 28px rgba(16, 185, 129, 0.2);
+    }
+    .discount-tag {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        background: #DC2626;
+        color: #FFFFFF;
+        font-size: 0.75rem;
+        font-weight: 700;
+        padding: 3px 8px;
+        border-radius: 6px;
+        text-transform: uppercase;
+    }
+    .card-title {
+        color: #F9FAFB;
+        font-size: 1.15rem;
+        font-weight: 700;
+        margin-bottom: 0.4rem;
+    }
+    .card-price {
+        color: #10B981;
+        font-size: 1.3rem;
+        font-weight: 800;
+        margin-bottom: 0.5rem;
+    }
+    .card-meta {
+        color: #9CA3AF;
+        font-size: 0.85rem;
+        line-height: 1.4;
     }
 
     /* WhatsApp Chat Bubble Styling */
@@ -79,29 +135,29 @@ st.markdown("""
         font-size: 0.95rem;
         color: #FFFFFF;
         box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-        animation: slide-in-up 0.2s ease-out;
+        animation: slideUp 0.2s ease-out;
     }
     .chat-bubble-bot {
-        background-color: #1E293B;
+        background-color: #1F2937;
         padding: 14px 18px;
         border-radius: 16px 16px 16px 2px;
         max-width: 80%;
         float: left;
         margin: 8px 0;
-        border: 1px solid #334155;
+        border: 1px solid #374151;
         font-size: 0.95rem;
-        color: #F8FAFC;
+        color: #F9FAFB;
         box-shadow: 0 2px 4px rgba(0,0,0,0.2);
         line-height: 1.5;
-        animation: slide-in-up 0.2s ease-out;
+        animation: slideUp 0.2s ease-out;
     }
     .chat-time {
         font-size: 0.7rem;
-        color: #94A3B8;
+        color: #9CA3AF;
         margin-top: 4px;
         display: block;
     }
-    
+
     /* Notification Cards with Glow Effect */
     .notification-card {
         padding: 1.25rem;
@@ -110,13 +166,13 @@ st.markdown("""
         border-left: 6px solid #10B981;
         margin-bottom: 1.2rem;
         color: #FFFFFF;
-        animation: slide-in-up 0.3s ease-out, pulse-glow 3s infinite;
+        animation: slideUp 0.3s ease-out, pulseGlow 3s infinite;
     }
     .notification-card h4 {
         color: #34D399;
         margin-bottom: 0.5rem;
     }
-    
+
     /* Animated Status Badges */
     .status-badge {
         display: inline-block;
@@ -125,16 +181,16 @@ st.markdown("""
         font-size: 0.8rem;
         font-weight: 600;
         text-transform: uppercase;
-        animation: badge-pulse 2s infinite ease-in-out;
     }
     .status-delivered { background-color: #059669; color: #FFFFFF; }
     .status-dispatched { background-color: #D97706; color: #FFFFFF; }
     .status-processing { background-color: #2563EB; color: #FFFFFF; }
 
-    /* Streamlit Primary Button Custom Animation */
+    /* Button Styling */
     div.stButton > button[kind="primary"] {
         transition: all 0.25s ease-in-out !important;
         border-radius: 8px !important;
+        font-weight: 600 !important;
     }
     div.stButton > button[kind="primary"]:hover {
         transform: scale(1.02) !important;
@@ -380,10 +436,10 @@ def get_global_database():
     }
 
 
-# Load the shared memory database
+# Load global memory state
 db = get_global_database()
 
-# Persistent session state initialization
+# Session state initializations
 if "current_user" not in st.session_state:
     st.session_state["current_user"] = None
 
@@ -402,11 +458,11 @@ def validate_uganda_phone(phone_str):
     return re.match(pattern, phone_str) is not None
 
 
-# --- 4. SIDEBAR NAVIGATION & ACCOUNT AUTHENTICATION ---
+# --- 4. SIDEBAR NAVIGATION & USER AUTHENTICATION ---
 with st.sidebar:
     st.image("https://img.icons8.com/color/96/medical-heart.png", width=60)
     st.title("MedSupply Uganda")
-    st.caption("B2B Digital Pharma Platform")
+    st.caption("B2B Digital Pharma Marketplace")
     st.divider()
 
     # User Account Status Indicator
@@ -427,14 +483,14 @@ with st.sidebar:
     if st.session_state.get("current_user") and st.session_state["current_user"] in db["users"]:
         user_role = db["users"][st.session_state["current_user"]]["role"]
 
-    # Dynamic Menu Options
+    # Navigation Options
     if user_role == "Staff / Admin":
         menu = [
+            "🛒 Wholesale Marketplace",
             "📦 Inventory Management",
             "🚚 Seller Control Center",
             "🏥 Outlets & Credit Lines",
             "📋 Master Order Logs",
-            "🛒 Place New Order",
             "🔔 Delivery Notifications",
             "💬 WhatsApp Assistant",
             "📱 Payment Gateways",
@@ -442,7 +498,7 @@ with st.sidebar:
         ]
     elif user_role == "Customer / Buyer":
         menu = [
-            "🛒 Place New Order",
+            "🛒 Wholesale Marketplace",
             "🔔 Delivery Notifications",
             "💬 WhatsApp Assistant",
             "📱 Payment Gateways",
@@ -450,6 +506,7 @@ with st.sidebar:
         ]
     else:
         menu = [
+            "🛒 Wholesale Marketplace",
             "🔐 Account Portal",
             "💬 WhatsApp Assistant",
             "📱 Payment Gateways"
@@ -464,15 +521,180 @@ with st.sidebar:
 
 # --- 5. PAGE ROUTING ---
 
+# CHOICE: WHOLESALE MARKETPLACE (JUMIA STYLE SHOWCASE)
+if choice == "🛒 Wholesale Marketplace":
+    # Jumia-Style Promotional Hero Banner
+    st.markdown("""
+        <div class="hero-container">
+            <div class="hero-title">💊 MedSupply B2B Pharma Express</div>
+            <div class="hero-subtitle">Uganda's Premier Digital Wholesale Marketplace for Pharmacies, Clinics & Hospitals.</div>
+            <div>
+                <span class="feature-badge">⚡ Same-Day Delivery</span>
+                <span class="feature-badge">🛡️ NDA Quality Certified</span>
+                <span class="feature-badge">💳 Up to UGX 5M Trade Credit</span>
+                <span class="feature-badge">📲 Instant WhatsApp Tracking</span>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # Search & Filter Row
+    col_search, col_cat = st.columns([3, 1])
+    with col_search:
+        search_query = st.text_input("🔍 Search Wholesale Products, Active Ingredients, or NDA Reg Numbers...",
+                                     placeholder="e.g. Amoxicillin, Paracetamol, Coartem...")
+    with col_cat:
+        category_filter = st.selectbox(
+            "Category", ["All Categories"] + list(db["inventory"]["Category"].unique()))
+
+    # Filter Inventory
+    filtered_df = db["inventory"].copy()
+    if category_filter != "All Categories":
+        filtered_df = filtered_df[filtered_df["Category"] == category_filter]
+    if search_query:
+        filtered_df = filtered_df[
+            filtered_df["Product Name"].str.contains(search_query, case=False) |
+            filtered_df["Category"].str.contains(search_query, case=False) |
+            filtered_df["NDA Reg No"].str.contains(search_query, case=False)
+        ]
+
+    st.subheader("🔥 Popular Wholesale Deals")
+
+    # Marketplace Product Grid (3 Columns)
+    cols = st.columns(3)
+    for idx, (_, item) in enumerate(filtered_df.iterrows()):
+        with cols[idx % 3]:
+            # Jumia Style Card Container
+            st.markdown(f"""
+                <div class="jumia-card">
+                    <span class="discount-tag">NDA VERIFIED</span>
+                    <div class="card-title">📦 {item['Product Name']}</div>
+                    <div class="card-price">UGX {item['Unit Price (UGX)']:,.0f} <span style="font-size:0.8rem; font-weight:normal; color:#9CA3AF;">/ box</span></div>
+                    <div class="card-meta">
+                        • <b>Category:</b> {item['Category']}<br>
+                        • <b>Batch:</b> <code>{item['Batch Number']}</code><br>
+                        • <b>Stock:</b> {item['Stock Quantity']} units remaining<br>
+                        • <b>Expiry:</b> {item['Expiry Date']}
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
+
+            if st.button(f"🛒 Order {item['Product Name'][:15]}...", key=f"buy_btn_{item['Item ID']}", type="primary", use_container_width=True):
+                if not st.session_state.get("current_user"):
+                    st.warning(
+                        "🔒 Please log in via **🔐 Account Portal** to place orders.")
+                else:
+                    st.session_state["selected_product"] = item["Product Name"]
+                    st.info(
+                        f"Selected **{item['Product Name']}**. Configure quantity below.")
+
+    st.divider()
+
+    # Place Order Checkout Form
+    if st.session_state.get("current_user") and st.session_state["current_user"] in db["users"]:
+        user_info = db["users"][st.session_state["current_user"]]
+        st.subheader("📝 Complete Your Wholesale Order")
+
+        col_order1, col_order2 = st.columns(2, gap="medium")
+        with col_order1:
+            default_item = st.session_state.get(
+                "selected_product", db["inventory"]["Product Name"].iloc[0])
+            selected_item_name = st.selectbox("Confirm Product", db["inventory"]["Product Name"].tolist(), index=list(
+                db["inventory"]["Product Name"]).index(default_item) if default_item in list(db["inventory"]["Product Name"]) else 0)
+
+            item_row = db["inventory"][db["inventory"]
+                                       ["Product Name"] == selected_item_name].iloc[0]
+            quantity = st.number_input(
+                "Quantity (Boxes)", min_value=1, value=5)
+
+            discount = 0.0
+            if quantity >= 50:
+                discount = 0.10
+                st.caption("🎉 10% Bulk Volume Discount Applied!")
+            elif quantity >= 10:
+                discount = 0.05
+                st.caption("🎉 5% Tiered Volume Discount Applied!")
+
+            base_price = quantity * item_row["Unit Price (UGX)"]
+            total_price = base_price * (1 - discount)
+
+        with col_order2:
+            recipient_name = st.text_input(
+                "Recipient Full Name", value=user_info["contact_name"])
+            recipient_phone = st.text_input(
+                "Recipient WhatsApp (+256...)", value=user_info["phone"])
+            recipient_email = st.text_input(
+                "Recipient Email", value=st.session_state["current_user"])
+            payment_method = st.radio("Payment Method", [
+                                      "MTN Mobile Money", "Airtel Money", "Trade Credit Line", "Cash on Delivery"], horizontal=True)
+
+        st.metric("Total Payable Amount", f"UGX {total_price:,.0f}",
+                  delta=f"-UGX {base_price - total_price:,.0f}" if discount > 0 else None)
+
+        if st.button("🚀 Confirm Order & Dispatch Alerts", type="primary", use_container_width=True):
+            if not validate_uganda_phone(recipient_phone):
+                st.error(
+                    "⚠️ Invalid Ugandan Phone Format! Ensure it starts with `+256` followed by 9 digits.")
+            elif quantity > item_row["Stock Quantity"]:
+                st.error("❌ Order quantity exceeds available warehouse stock.")
+            else:
+                db["inventory"].loc[db["inventory"]["Product Name"] ==
+                                    selected_item_name, "Stock Quantity"] -= quantity
+
+                order_id = f"ORD-{uuid.uuid4().hex[:4].upper()}"
+
+                new_order = {
+                    "OrderID": order_id,
+                    "Outlet": user_info["business_name"],
+                    "Recipient Name": recipient_name,
+                    "Recipient Phone": recipient_phone,
+                    "Recipient Email": recipient_email,
+                    "Product Name": selected_item_name,
+                    "Batch Number": item_row["Batch Number"],
+                    "Quantity": quantity,
+                    "Total Amount (UGX)": total_price,
+                    "Payment Method": payment_method,
+                    "Payment Status": "Pending Payment",
+                    "Item Verified": "Pending Inspection",
+                    "Status": "Processing",
+                    "Date": str(datetime.date.today()),
+                    "Dispatch Time": "Pending",
+                    "Delivery Time": "Pending"
+                }
+
+                db["orders"] = pd.concat(
+                    [pd.DataFrame([new_order]), db["orders"]], ignore_index=True)
+
+                exact_time_now = datetime.datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+                email_sent, email_msg = send_delivery_email(
+                    recipient_email=recipient_email,
+                    recipient_name=recipient_name,
+                    order_id=order_id,
+                    product_name=selected_item_name,
+                    quantity=quantity,
+                    total_amount=total_price,
+                    delivery_time=exact_time_now
+                )
+
+                wa_sent, wa_msg = send_whatsapp_notification(
+                    recipient_phone=recipient_phone,
+                    recipient_name=recipient_name,
+                    order_id=order_id,
+                    product_name=selected_item_name,
+                    quantity=quantity,
+                    total_amount=total_price
+                )
+
+                st.success(f"✅ Order **{order_id}** placed successfully!")
+                st.info(f"📧 **Email:** {email_msg} | 📲 **WhatsApp:** {wa_msg}")
+
 # CHOICE: ACCOUNT PORTAL
-if choice == "🔐 Account Portal":
+elif choice == "🔐 Account Portal":
     st.header("🔐 User Account Portal")
     st.caption("Create an account, log in, or recover forgotten credentials.")
 
     tab_login, tab_signup, tab_reset = st.tabs(
         ["🔑 Log In", "📝 Create New Account", "🔑 Reset Password"])
 
-    # --- 1. LOGIN TAB ---
     with tab_login:
         st.subheader("Login to Your Account")
         with st.form("login_form", clear_on_submit=False):
@@ -498,13 +720,10 @@ if choice == "🔐 Account Portal":
                 st.error(
                     "❌ Account not found. Please register first under 'Create New Account'.")
 
-    # --- 2. SIGNUP TAB ---
     with tab_signup:
         st.subheader("Register Pharmacy / Clinic Account")
-
         with st.form("signup_form", clear_on_submit=False):
             col_reg1, col_reg2 = st.columns(2)
-
             with col_reg1:
                 new_biz = st.text_input(
                     "Pharmacy / Business Name *", placeholder="e.g. Kampala Care Pharmacy", key="reg_biz")
@@ -564,12 +783,8 @@ if choice == "🔐 Account Portal":
                     "🎉 Account successfully registered! You are now logged in.")
                 st.rerun()
 
-    # --- 3. PASSWORD RECOVERY TAB ---
     with tab_reset:
         st.subheader("Reset Forgotten Password")
-        st.caption(
-            "Verify your registered email and phone number to create a new password.")
-
         with st.form("reset_form", clear_on_submit=False):
             reset_email = st.text_input(
                 "Registered Email Address *", key="reset_email_input").strip().lower()
@@ -587,181 +802,18 @@ if choice == "🔐 Account Portal":
             if not reset_email or not reset_phone or not reset_new_pass or not reset_confirm_pass:
                 st.error("⚠️ Please fill in all required fields.")
             elif reset_new_pass != reset_confirm_pass:
-                st.error("❌ Passwords do not match. Please re-enter.")
+                st.error("❌ Passwords do not match.")
             elif reset_email not in db["users"]:
-                st.error("❌ Account not found. Verify your email address.")
+                st.error("❌ Account not found.")
             elif db["users"][reset_email]["phone"].strip() != reset_phone:
-                st.error(
-                    "❌ Phone number does not match our records for this account.")
+                st.error("❌ Phone number does not match our records.")
             else:
                 db["users"][reset_email]["password"] = reset_new_pass
-                st.success(
-                    "✅ Password successfully updated! You can now log in under the 'Log In' tab.")
-
-# CHOICE: PLACE NEW ORDER
-elif choice == "🛒 Place New Order":
-    st.header("🛒 Place Order & Notification Setup")
-
-    if not st.session_state.get("current_user") or st.session_state["current_user"] not in db["users"]:
-        st.warning(
-            "🔒 **Authentication Required:** You must log in or register an account before placing an order.")
-        st.info("Please navigate to **🔐 Account Portal** in the sidebar to proceed.")
-    else:
-        user_info = db["users"][st.session_state["current_user"]]
-
-        col_a, col_b = st.columns(2, gap="medium")
-
-        with col_a:
-            st.subheader("1. Order & Product Selection")
-            selected_outlet_name = st.text_input(
-                "Registered Outlet", value=user_info["business_name"], disabled=True)
-
-            category_filter = st.selectbox(
-                "Filter Category", ["All"] + list(db["inventory"]["Category"].unique()))
-
-            if category_filter != "All":
-                filtered_inv = db["inventory"][db["inventory"]
-                                               ["Category"] == category_filter]
-            else:
-                filtered_inv = db["inventory"]
-
-            selected_item_name = st.selectbox(
-                "Select Product", filtered_inv["Product Name"].tolist())
-            item_row = db["inventory"][db["inventory"]
-                                       ["Product Name"] == selected_item_name].iloc[0]
-
-            # Jumia Style Product Preview Card
-            st.markdown(f"""
-                <div class="product-card">
-                    <h4 style="color: #34D399; margin: 0 0 8px 0;">📦 {selected_item_name}</h4>
-                    <p style="margin: 0; font-size: 0.9rem; color: #94A3B8;">
-                        Category: <b>{item_row['Category']}</b> | Unit Price: <b style="color: #10B981;">UGX {item_row['Unit Price (UGX)']:,.0f}</b>
-                    </p>
-                </div>
-            """, unsafe_allow_html=True)
-
-            if user_role == "Staff / Admin":
-                st.info(
-                    f"📋 **Batch No:** `{item_row['Batch Number']}` | **Expiry:** `{item_row['Expiry Date']}` | **NDA Reg:** `{item_row['NDA Reg No']}` | **Stock:** `{item_row['Stock Quantity']}` units")
-            else:
-                if item_row["Stock Quantity"] > 0:
-                    st.success(
-                        "✅ **Availability:** In Stock (Ready for Dispatch)")
-                else:
-                    st.error("❌ **Availability:** Out of Stock")
-
-            quantity = st.number_input(
-                "Quantity (Boxes)", min_value=1, value=5)
-
-            discount = 0.0
-            if quantity >= 50:
-                discount = 0.10
-                st.caption("🎉 10% Bulk Volume Discount Applied!")
-            elif quantity >= 10:
-                discount = 0.05
-                st.caption("🎉 5% Tiered Volume Discount Applied!")
-
-            base_price = quantity * item_row["Unit Price (UGX)"]
-            total_price = base_price * (1 - discount)
-
-        with col_b:
-            st.subheader("2. Delivery Recipient Details")
-            st.caption("Auto-filled from your registered account profile:")
-
-            recipient_name = st.text_input(
-                "Recipient Full Name", value=user_info["contact_name"])
-            recipient_phone = st.text_input(
-                "Recipient WhatsApp Number (+256...)", value=user_info["phone"])
-            recipient_email = st.text_input(
-                "Recipient Email Address", value=st.session_state["current_user"])
-
-        st.divider()
-
-        col_price, col_pay = st.columns([1, 2])
-        with col_price:
-            st.metric("Total Payable Amount", f"UGX {total_price:,.0f}",
-                      delta=f"-UGX {base_price - total_price:,.0f}" if discount > 0 else None)
-
-        with col_pay:
-            payment_method = st.radio("Payment Method", [
-                                      "MTN Mobile Money", "Airtel Money", "Trade Credit Line", "Cash on Delivery"], horizontal=True)
-
-        if st.button("🚀 Confirm Order & Register Recipient", type="primary", use_container_width=True):
-            if not validate_uganda_phone(recipient_phone):
-                st.error(
-                    "⚠️ Invalid Ugandan Phone Format! Ensure it starts with `+256` followed by 9 digits.")
-            elif quantity > item_row["Stock Quantity"]:
-                st.error("❌ Order quantity exceeds available warehouse stock.")
-            else:
-                db["inventory"].loc[db["inventory"]["Product Name"] ==
-                                    selected_item_name, "Stock Quantity"] -= quantity
-
-                order_id = f"ORD-{uuid.uuid4().hex[:4].upper()}"
-
-                new_order = {
-                    "OrderID": order_id,
-                    "Outlet": user_info["business_name"],
-                    "Recipient Name": recipient_name,
-                    "Recipient Phone": recipient_phone,
-                    "Recipient Email": recipient_email,
-                    "Product Name": selected_item_name,
-                    "Batch Number": item_row["Batch Number"],
-                    "Quantity": quantity,
-                    "Total Amount (UGX)": total_price,
-                    "Payment Method": payment_method,
-                    "Payment Status": "Pending Payment",
-                    "Item Verified": "Pending Inspection",
-                    "Status": "Processing",
-                    "Date": str(datetime.date.today()),
-                    "Dispatch Time": "Pending",
-                    "Delivery Time": "Pending"
-                }
-
-                db["orders"] = pd.concat(
-                    [pd.DataFrame([new_order]), db["orders"]], ignore_index=True)
-
-                if payment_method == "Trade Credit Line":
-                    db["outlets"].loc[db["outlets"]["Business Name"] ==
-                                      user_info["business_name"], "Used Credit (UGX)"] += total_price
-
-                # --- TRIGGER EMAIL DISPATCH ---
-                exact_time_now = datetime.datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
-                email_sent, email_msg = send_delivery_email(
-                    recipient_email=recipient_email,
-                    recipient_name=recipient_name,
-                    order_id=order_id,
-                    product_name=selected_item_name,
-                    quantity=quantity,
-                    total_amount=total_price,
-                    delivery_time=exact_time_now
-                )
-
-                # --- TRIGGER WHATSAPP INSTANT PUSH ---
-                wa_sent, wa_msg = send_whatsapp_notification(
-                    recipient_phone=recipient_phone,
-                    recipient_name=recipient_name,
-                    order_id=order_id,
-                    product_name=selected_item_name,
-                    quantity=quantity,
-                    total_amount=total_price
-                )
-
-                if email_sent:
-                    st.success(
-                        f"✅ Order **{order_id}** recorded! Email notification sent to **{recipient_email}**.")
-                else:
-                    st.warning(
-                        f"✅ Order **{order_id}** recorded, but email failed:\n`{email_msg}`")
-
-                if wa_sent:
-                    st.info(f"📲 **WhatsApp Alert:** {wa_msg}")
-                else:
-                    st.caption(f"ℹ️ **WhatsApp Note:** {wa_msg}")
+                st.success("✅ Password successfully updated!")
 
 # CHOICE: DELIVERY NOTIFICATIONS
 elif choice == "🔔 Delivery Notifications":
     st.header("🔔 Live Delivery Notifications & Order Tracker")
-    st.caption("Real-time updates sent to recipients upon order fulfillment.")
 
     delivered_orders = db["orders"][db["orders"]
                                     ["Status"].isin(["Arrived", "Delivered"])]
@@ -774,8 +826,7 @@ elif choice == "🔔 Delivery Notifications":
                     <p><b>Facility Outlet:</b> {order['Outlet']} | <b>Line Item:</b> {order['Product Name']} ({order['Quantity']} Boxes)</p>
                     <p><b>Batch Verification:</b> `{order['Batch Number']}` | <b>Item Accuracy:</b> {order['Item Verified']}</p>
                     <p><b>Recipient:</b> {order['Recipient Name']} ({order['Recipient Phone']} / {order['Recipient Email']})</p>
-                    <p><b>Payment Status:</b> {order['Payment Status']} ({order['Payment Method']})</p>
-                    <p><b>Status:</b> <span class="status-badge status-delivered">DELIVERED</span> | <b>Exact Timestamp:</b> {order['Delivery Time']}</p>
+                    <p><b>Status:</b> <span class="status-badge status-delivered">DELIVERED</span> | <b>Timestamp:</b> {order['Delivery Time']}</p>
                 </div>
             """, unsafe_allow_html=True)
 
@@ -790,8 +841,7 @@ elif choice == "🔔 Delivery Notifications":
                                             ["OrderID"] == order["OrderID"]].index[0]
                     db["orders"].at[real_idx, "Payment Status"] = "Paid on Delivery"
                     db["orders"].at[real_idx, "Item Verified"] = "Verified Correct"
-                    st.success(
-                        "Delivery, Item Accuracy, and Payment Confirmed!")
+                    st.success("Delivery & Payment Confirmed!")
                     st.rerun()
             with c3:
                 if st.button(f"⚠️ Report Issue", key=f"rep_{order['OrderID']}"):
@@ -825,8 +875,6 @@ elif choice == "🔔 Delivery Notifications":
 # CHOICE: SELLER CONTROL CENTER
 elif choice == "🚚 Seller Control Center":
     st.header("🚚 Seller Dashboard: Dispatch & Delivery Trigger")
-    st.caption(
-        "Manage B2B order fulfillments, track payments on delivery, and automatically notify customers upon delivery.")
 
     @st.fragment(run_every=5)
     def render_live_seller_dashboard():
@@ -851,7 +899,7 @@ elif choice == "🚚 Seller Control Center":
                 col2.write(
                     f"📦 **Item:** {row['Product Name']} ({row['Quantity']} Boxes)\n🏷️ **Batch:** `{row['Batch Number']}`\n💰 **Total:** UGX {row['Total Amount (UGX)']:,.0f}")
                 col3.write(
-                    f"Status: **{row['Status']}**\nPayment: **{row['Payment Status']}**\nItem Detection: **{row['Item Verified']}**\nTimestamp: *{row['Delivery Time']}*")
+                    f"Status: **{row['Status']}**\nPayment: **{row['Payment Status']}**\nTimestamp: *{row['Delivery Time']}*")
 
                 if row["Status"] != "Delivered":
                     st.file_uploader(f"Upload POD Image ({row['OrderID']})", type=[
@@ -872,7 +920,6 @@ elif choice == "🚚 Seller Control Center":
                             db["orders"].at[real_idx,
                                             "Item Verified"] = "Verified Correct Item"
 
-                            # Trigger Automatic Email & WhatsApp Dispatch to Customer
                             email_sent, email_msg = send_delivery_email(
                                 recipient_email=row["Recipient Email"],
                                 recipient_name=row["Recipient Name"],
@@ -908,7 +955,7 @@ elif choice == "🚚 Seller Control Center":
                             st.rerun()
                 else:
                     st.write(
-                        f"✅ **Delivery Confirmed at {row['Delivery Time']}** | **Payment: {row['Payment Status']}** | **Detection: {row['Item Verified']}**")
+                        f"✅ **Delivery Confirmed at {row['Delivery Time']}** | **Payment: {row['Payment Status']}**")
                 st.divider()
 
     render_live_seller_dashboard()
@@ -918,7 +965,6 @@ elif choice == "💬 WhatsApp Assistant":
     st.header("💬 Professional WhatsApp Assistant")
 
     col_chat, col_info = st.columns([3, 1])
-
     with col_info:
         st.subheader("Support Link")
         st.markdown(
@@ -1009,8 +1055,6 @@ elif choice == "📱 Payment Gateways":
                 txn_id = f"TXN-MOMO-{uuid.uuid4().hex[:6].upper()}"
                 st.success(
                     f"✅ USSD Prompt pushed to {momo_phone}! Reference ID: `{txn_id}`")
-                st.info(
-                    "Waiting for PIN confirmation on subscriber handset (45s timeout)...")
             else:
                 st.error("Invalid phone number format! Use +256 prefix.")
 
@@ -1028,21 +1072,17 @@ elif choice == "📱 Payment Gateways":
         st.write("**Bank:** Stanbic Bank Uganda")
         st.write("**Account Name:** MedSupply Uganda Limited")
         st.write("**Account Number:** 9030012345678")
-        st.write("**Branch:** Kampala Corporate Branch")
 
 # CHOICE: INVENTORY MANAGEMENT
 elif choice == "📦 Inventory Management":
     st.header("📦 Warehouse Stock Management")
-    st.caption(
-        "Add stock, or edit live inventory counts, pricing, and batch details.")
 
     low_stock = db["inventory"][db["inventory"]["Stock Quantity"] < 200]
     if not low_stock.empty:
         for _, row in low_stock.iterrows():
             st.warning(
-                f"⚠️ **Low Stock Alert:** `{row['Product Name']}` has only **{row['Stock Quantity']}** boxes left in stock!")
+                f"⚠️ **Low Stock Alert:** `{row['Product Name']}` has only **{row['Stock Quantity']}** boxes left!")
 
-    # Direct Form to Add New Inventory Items
     with st.expander("➕ Add New Item to Inventory", expanded=True):
         with st.form("add_item_form", clear_on_submit=True):
             c1, c2 = st.columns(2)
@@ -1084,8 +1124,7 @@ elif choice == "📦 Inventory Management":
                     }
                     db["inventory"] = pd.concat(
                         [db["inventory"], pd.DataFrame([new_item])], ignore_index=True)
-                    st.success(
-                        f"✅ Item **{prod_name}** added to inventory successfully!")
+                    st.success(f"✅ Item **{prod_name}** added to inventory!")
                     st.rerun()
 
     st.subheader("Interactive Stock Editor")
@@ -1094,15 +1133,12 @@ elif choice == "📦 Inventory Management":
         edited_state = st.session_state.get("inventory_editor")
         if not edited_state:
             return
-
         for row_idx, changes in edited_state.get("edited_rows", {}).items():
             for col, value in changes.items():
                 db["inventory"].at[row_idx, col] = value
-
         for new_row in edited_state.get("added_rows", []):
             db["inventory"] = pd.concat(
                 [db["inventory"], pd.DataFrame([new_row])], ignore_index=True)
-
         if edited_state.get("deleted_rows"):
             db["inventory"] = db["inventory"].drop(
                 edited_state["deleted_rows"]).reset_index(drop=True)
