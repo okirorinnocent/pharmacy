@@ -192,7 +192,7 @@ st.markdown("""
         border-radius: 8px !important;
         font-weight: 600 !important;
     }
-    div.stButton > button[kind="primary"]:hover {
+    div.stButton > button[kind="primary"]:hover:not(:disabled) {
         transform: scale(1.02) !important;
         box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4) !important;
     }
@@ -201,8 +201,8 @@ st.markdown("""
 
 
 # --- AUTOMATIC EMAIL DISPATCH UTILITY ---
-def send_delivery_email(recipient_email, recipient_name, order_id, product_name, quantity, total_amount, delivery_time):
-    """Sends an automatic order/delivery notification email to the customer."""
+def send_delivery_email(recipient_email, recipient_name, delivery_location, order_id, product_name, quantity, total_amount, delivery_time):
+    """Sends an automatic order/delivery notification email to the customer with location details."""
     subject = f"📦 Order Notification: {order_id} - MedSupply Uganda"
 
     html_content = f"""
@@ -215,14 +215,15 @@ def send_delivery_email(recipient_email, recipient_name, order_id, product_name,
             <p>Your order <strong>{order_id}</strong> has been successfully processed/updated.</p>
             
             <div style="background-color: #f8fafc; padding: 15px; border-radius: 6px; margin: 15px 0;">
-                <h4 style="margin-top: 0; color: #1e293b;">Order Details</h4>
+                <h4 style="margin-top: 0; color: #1e293b;">Order Summary</h4>
                 <p><strong>Order ID:</strong> {order_id}<br>
                 <strong>Product:</strong> {product_name} ({quantity} Boxes)<br>
                 <strong>Total Amount:</strong> UGX {total_amount:,.0f}<br>
+                <strong>Delivery Destination:</strong> {delivery_location}<br>
                 <strong>Timestamp:</strong> {delivery_time}</p>
             </div>
             
-            <p>Please log in to your account portal to track status and manage payment details.</p>
+            <p>Please log in to your account portal to track live status and delivery updates.</p>
             <p style="font-size: 0.85rem; color: #64748b;">MedSupply Uganda Operations Team<br>Contact: +256763212490</p>
         </div>
     </body>
@@ -260,8 +261,8 @@ def send_delivery_email(recipient_email, recipient_name, order_id, product_name,
 
 
 # --- WHATSAPP INSTANT PUSH UTILITY ---
-def send_whatsapp_notification(recipient_phone, recipient_name, order_id, product_name, quantity, total_amount):
-    """Sends an automated WhatsApp notification via Meta WhatsApp Cloud API."""
+def send_whatsapp_notification(recipient_phone, recipient_name, delivery_location, order_id, product_name, quantity, total_amount):
+    """Sends an automated WhatsApp notification via Meta WhatsApp Cloud API with location details."""
     try:
         if "WHATSAPP_TOKEN" not in st.secrets or "WHATSAPP_PHONE_NUMBER_ID" not in st.secrets:
             return False, "WhatsApp API credentials missing in secrets."
@@ -288,7 +289,8 @@ def send_whatsapp_notification(recipient_phone, recipient_name, order_id, produc
                     f"Dear *{recipient_name}*,\n"
                     f"Your order *{order_id}* status update:\n\n"
                     f"• *Item:* {product_name} ({quantity} Boxes)\n"
-                    f"• *Total Amount:* UGX {total_amount:,.0f}\n\n"
+                    f"• *Total Amount:* UGX {total_amount:,.0f}\n"
+                    f"• *Delivery Destination:* {delivery_location}\n\n"
                     f"Log in to your portal for live tracking & delivery updates."
                 )
             }
@@ -396,6 +398,7 @@ def get_global_database():
             "Recipient Name": "Dr. Sarah",
             "Recipient Phone": "+256771234567",
             "Recipient Email": "sarah@carepharma.com",
+            "Delivery Location": "Kampala Central, Plot 14 Acacia Ave",
             "Product Name": "Amoxicillin 500mg (Box of 100)",
             "Batch Number": "AMX-2026-09A",
             "Quantity": 5,
@@ -414,6 +417,7 @@ def get_global_database():
             "Recipient Name": "John Doe",
             "Recipient Phone": "+256788990011",
             "Recipient Email": "john@mbararaclinic.com",
+            "Delivery Location": "Mbarara Town, High Street Plot 8",
             "Product Name": "Coartem 20/120 (Box of 30)",
             "Batch Number": "CRT-2026-11B",
             "Quantity": 5,
@@ -442,6 +446,9 @@ db = get_global_database()
 # Session state initializations
 if "current_user" not in st.session_state:
     st.session_state["current_user"] = None
+
+if "order_placed" not in st.session_state:
+    st.session_state["order_placed"] = False
 
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = [
@@ -472,6 +479,7 @@ with st.sidebar:
             f"👤 **Logged in as:**\n{user_info['contact_name']}\n*({user_info['business_name']})*")
         if st.button("🚪 Log Out", type="secondary"):
             st.session_state["current_user"] = None
+            st.session_state["order_placed"] = False
             st.rerun()
     else:
         st.warning("🔒 **Not Logged In**\nSign up or log in to place orders.")
@@ -523,14 +531,13 @@ with st.sidebar:
 
 # CHOICE: WHOLESALE MARKETPLACE (JUMIA STYLE SHOWCASE)
 if choice == "🛒 Wholesale Marketplace":
-    # Jumia-Style Promotional Hero Banner
     st.markdown("""
         <div class="hero-container">
             <div class="hero-title">💊 MedSupply B2B Pharma Express</div>
             <div class="hero-subtitle">Uganda's Premier Digital Wholesale Marketplace for Pharmacies, Clinics & Hospitals.</div>
             <div>
                 <span class="feature-badge">⚡ Same-Day Delivery</span>
-                <span class="feature-badge">🛡️ NDA Quality Certified</span>
+                <span class="feature-badge">🛡️️ NDA Quality Certified</span>
                 <span class="feature-badge">💳 Up to UGX 5M Trade Credit</span>
                 <span class="feature-badge">📲 Instant WhatsApp Tracking</span>
             </div>
@@ -563,7 +570,6 @@ if choice == "🛒 Wholesale Marketplace":
     cols = st.columns(3)
     for idx, (_, item) in enumerate(filtered_df.iterrows()):
         with cols[idx % 3]:
-            # Jumia Style Card Container
             st.markdown(f"""
                 <div class="jumia-card">
                     <span class="discount-tag">NDA VERIFIED</span>
@@ -578,14 +584,16 @@ if choice == "🛒 Wholesale Marketplace":
                 </div>
             """, unsafe_allow_html=True)
 
-            if st.button(f"🛒 Order {item['Product Name'][:15]}...", key=f"buy_btn_{item['Item ID']}", type="primary", use_container_width=True):
+            if st.button(f"🛒 Select {item['Product Name'][:15]}...", key=f"buy_btn_{item['Item ID']}", type="primary", use_container_width=True):
                 if not st.session_state.get("current_user"):
                     st.warning(
                         "🔒 Please log in via **🔐 Account Portal** to place orders.")
                 else:
                     st.session_state["selected_product"] = item["Product Name"]
+                    # Reset placement state when switching products
+                    st.session_state["order_placed"] = False
                     st.info(
-                        f"Selected **{item['Product Name']}**. Configure quantity below.")
+                        f"Selected **{item['Product Name']}**. Configure order details below.")
 
     st.divider()
 
@@ -619,24 +627,38 @@ if choice == "🛒 Wholesale Marketplace":
 
         with col_order2:
             recipient_name = st.text_input(
-                "Recipient Full Name", value=user_info["contact_name"])
+                "Recipient Full Name *", value=user_info["contact_name"])
             recipient_phone = st.text_input(
-                "Recipient WhatsApp (+256...)", value=user_info["phone"])
+                "Recipient WhatsApp (+256...) *", value=user_info["phone"])
             recipient_email = st.text_input(
-                "Recipient Email", value=st.session_state["current_user"])
+                "Recipient Email *", value=st.session_state["current_user"])
+
+            # --- DELIVERY LOCATION FIELD ---
+            delivery_location = st.text_input("Delivery Physical Address / City *", value=user_info.get(
+                "location", "Kampala Central"), placeholder="e.g. Plot 12 Kampala Road, Kampala")
+
             payment_method = st.radio("Payment Method", [
                                       "MTN Mobile Money", "Airtel Money", "Trade Credit Line", "Cash on Delivery"], horizontal=True)
 
         st.metric("Total Payable Amount", f"UGX {total_price:,.0f}",
                   delta=f"-UGX {base_price - total_price:,.0f}" if discount > 0 else None)
 
-        if st.button("🚀 Confirm Order & Dispatch Alerts", type="primary", use_container_width=True):
+        # Handle Disabled State Post-Confirmation
+        is_disabled = st.session_state.get("order_placed", False)
+        button_label = "✅ Order Confirmed & Dispatched" if is_disabled else "🚀 Confirm Order & Dispatch Alerts"
+
+        if st.button(button_label, type="primary", use_container_width=True, disabled=is_disabled):
             if not validate_uganda_phone(recipient_phone):
                 st.error(
-                    "⚠️ Invalid Ugandan Phone Format! Ensure it starts with `+256` followed by 9 digits.")
+                    "⚠️️ Invalid Ugandan Phone Format! Ensure it starts with `+256` followed by 9 digits.")
+            elif not delivery_location.strip():
+                st.error("⚠️ Please specify a valid physical delivery address.")
             elif quantity > item_row["Stock Quantity"]:
                 st.error("❌ Order quantity exceeds available warehouse stock.")
             else:
+                # Mark order button as disabled immediately
+                st.session_state["order_placed"] = True
+
                 db["inventory"].loc[db["inventory"]["Product Name"] ==
                                     selected_item_name, "Stock Quantity"] -= quantity
 
@@ -648,6 +670,7 @@ if choice == "🛒 Wholesale Marketplace":
                     "Recipient Name": recipient_name,
                     "Recipient Phone": recipient_phone,
                     "Recipient Email": recipient_email,
+                    "Delivery Location": delivery_location,
                     "Product Name": selected_item_name,
                     "Batch Number": item_row["Batch Number"],
                     "Quantity": quantity,
@@ -665,9 +688,12 @@ if choice == "🛒 Wholesale Marketplace":
                     [pd.DataFrame([new_order]), db["orders"]], ignore_index=True)
 
                 exact_time_now = datetime.datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+
+                # Send Email
                 email_sent, email_msg = send_delivery_email(
                     recipient_email=recipient_email,
                     recipient_name=recipient_name,
+                    delivery_location=delivery_location,
                     order_id=order_id,
                     product_name=selected_item_name,
                     quantity=quantity,
@@ -675,17 +701,27 @@ if choice == "🛒 Wholesale Marketplace":
                     delivery_time=exact_time_now
                 )
 
+                # Send WhatsApp Push
                 wa_sent, wa_msg = send_whatsapp_notification(
                     recipient_phone=recipient_phone,
                     recipient_name=recipient_name,
+                    delivery_location=delivery_location,
                     order_id=order_id,
                     product_name=selected_item_name,
                     quantity=quantity,
                     total_amount=total_price
                 )
 
-                st.success(f"✅ Order **{order_id}** placed successfully!")
+                st.success(
+                    f"✅ Order **{order_id}** placed successfully! Delivering to: **{delivery_location}**")
                 st.info(f"📧 **Email:** {email_msg} | 📲 **WhatsApp:** {wa_msg}")
+                st.rerun()
+
+        # Option to Place New Order
+        if is_disabled:
+            if st.button("➕ Place Another Order", type="secondary", use_container_width=True):
+                st.session_state["order_placed"] = False
+                st.rerun()
 
 # CHOICE: ACCOUNT PORTAL
 elif choice == "🔐 Account Portal":
@@ -736,7 +772,7 @@ elif choice == "🔐 Account Portal":
                 new_phone = st.text_input(
                     "WhatsApp Mobile (+256...) *", placeholder="e.g. +256770665588", key="reg_phone")
                 new_loc = st.text_input(
-                    "Physical Location / City *", placeholder="e.g. Kampala", key="reg_loc")
+                    "Physical Location / City *", placeholder="e.g. Kampala Central, Plot 14 Acacia Ave", key="reg_loc")
                 new_pass = st.text_input(
                     "Create Password *", type="password", key="reg_pass")
 
@@ -824,6 +860,7 @@ elif choice == "🔔 Delivery Notifications":
                 <div class="notification-card">
                     <h4>🎉 DELIVERY CONFIRMED | Order {order['OrderID']}</h4>
                     <p><b>Facility Outlet:</b> {order['Outlet']} | <b>Line Item:</b> {order['Product Name']} ({order['Quantity']} Boxes)</p>
+                    <p><b>Delivery Destination:</b> {order.get('Delivery Location', 'Registered Outlet Address')}</p>
                     <p><b>Batch Verification:</b> `{order['Batch Number']}` | <b>Item Accuracy:</b> {order['Item Verified']}</p>
                     <p><b>Recipient:</b> {order['Recipient Name']} ({order['Recipient Phone']} / {order['Recipient Email']})</p>
                     <p><b>Status:</b> <span class="status-badge status-delivered">DELIVERED</span> | <b>Timestamp:</b> {order['Delivery Time']}</p>
@@ -852,7 +889,8 @@ elif choice == "🔔 Delivery Notifications":
     st.divider()
     st.subheader("📦 Order Tracker")
 
-    search_q = st.text_input("🔍 Search by Order ID, Outlet, or Recipient Name")
+    search_q = st.text_input(
+        "🔍 Search by Order ID, Outlet, Location, or Recipient Name")
     status_filter = st.multiselect("Filter by Status", options=[
                                    "Processing", "Dispatched", "Delivered"], default=["Processing", "Dispatched", "Delivered"])
 
@@ -861,13 +899,14 @@ elif choice == "🔔 Delivery Notifications":
         df_display = df_display[
             df_display["OrderID"].str.contains(search_q, case=False) |
             df_display["Outlet"].str.contains(search_q, case=False) |
-            df_display["Recipient Name"].str.contains(search_q, case=False)
+            df_display["Recipient Name"].str.contains(search_q, case=False) |
+            df_display["Delivery Location"].str.contains(search_q, case=False)
         ]
     df_display = df_display[df_display["Status"].isin(status_filter)]
 
     if user_role == "Customer / Buyer":
-        customer_cols = ["OrderID", "Outlet", "Product Name", "Batch Number", "Quantity",
-                         "Total Amount (UGX)", "Payment Status", "Item Verified", "Status", "Delivery Time"]
+        customer_cols = ["OrderID", "Outlet", "Product Name", "Delivery Location", "Batch Number",
+                         "Quantity", "Total Amount (UGX)", "Payment Status", "Item Verified", "Status", "Delivery Time"]
         st.dataframe(df_display[customer_cols], use_container_width=True)
     else:
         st.dataframe(df_display, use_container_width=True)
@@ -895,7 +934,7 @@ elif choice == "🚚 Seller Control Center":
                 col1, col2, col3 = st.columns([2, 2, 2])
 
                 col1.write(
-                    f"👤 **Recipient:** {row['Recipient Name']}\n📞 {row['Recipient Phone']}\n📧 {row['Recipient Email']}")
+                    f"👤 **Recipient:** {row['Recipient Name']}\n📞 {row['Recipient Phone']}\n📧 {row['Recipient Email']}\n📍 **Destination:** {row.get('Delivery Location', 'N/A')}")
                 col2.write(
                     f"📦 **Item:** {row['Product Name']} ({row['Quantity']} Boxes)\n🏷️ **Batch:** `{row['Batch Number']}`\n💰 **Total:** UGX {row['Total Amount (UGX)']:,.0f}")
                 col3.write(
@@ -923,6 +962,8 @@ elif choice == "🚚 Seller Control Center":
                             email_sent, email_msg = send_delivery_email(
                                 recipient_email=row["Recipient Email"],
                                 recipient_name=row["Recipient Name"],
+                                delivery_location=row.get(
+                                    "Delivery Location", "Facility Outlet"),
                                 order_id=row["OrderID"],
                                 product_name=row["Product Name"],
                                 quantity=row["Quantity"],
@@ -933,6 +974,8 @@ elif choice == "🚚 Seller Control Center":
                             wa_sent, wa_msg = send_whatsapp_notification(
                                 recipient_phone=row["Recipient Phone"],
                                 recipient_name=row["Recipient Name"],
+                                delivery_location=row.get(
+                                    "Delivery Location", "Facility Outlet"),
                                 order_id=row["OrderID"],
                                 product_name=row["Product Name"],
                                 quantity=row["Quantity"],
