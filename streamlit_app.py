@@ -423,7 +423,7 @@ if choice == "🔐 Account Portal":
                 st.error("⚠️ Please fill in all required fields marked with *.")
             elif not validate_uganda_phone(new_phone):
                 st.error(
-                    "⚠️ Invalid Ugandan Phone Format! Ensure it starts with `+256` followed by 9 digits.")
+                    "⚠️️ Invalid Ugandan Phone Format! Ensure it starts with `+256` followed by 9 digits.")
             elif new_email in db["users"]:
                 st.error(
                     "⚠️ An account with this email already exists. Please log in.")
@@ -890,7 +890,10 @@ elif choice == "📦 Inventory Management":
     st.subheader("Interactive Stock Editor")
 
     def update_inventory():
-        edited_state = st.session_state["inventory_editor"]
+        # SAFELY ACCESS SESSION STATE TO PREVENT KEYERROR ON INITIAL RENDER
+        edited_state = st.session_state.get("inventory_editor")
+        if not edited_state:
+            return
 
         for row_idx, changes in edited_state.get("edited_rows", {}).items():
             for col, value in changes.items():
