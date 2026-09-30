@@ -98,8 +98,8 @@ st.markdown("""
 
 # --- AUTOMATIC EMAIL DISPATCH UTILITY ---
 def send_delivery_email(recipient_email, recipient_name, order_id, product_name, quantity, total_amount, delivery_time):
-    """Sends an automatic delivery notification email to the customer upon order confirmation."""
-    subject = f"🚚 Order Delivered: {order_id} - MedSupply Uganda"
+    """Sends an automatic order/delivery notification email to the customer."""
+    subject = f"📦 Order Notification: {order_id} - MedSupply Uganda"
 
     html_content = f"""
     <html>
@@ -108,17 +108,17 @@ def send_delivery_email(recipient_email, recipient_name, order_id, product_name,
             <h2 style="color: #059669;">MedSupply Uganda</h2>
             <hr style="border: 0; border-top: 1px solid #eeeeee;">
             <p>Dear <strong>{recipient_name}</strong>,</p>
-            <p>Your order <strong>{order_id}</strong> has been successfully delivered to your facility.</p>
+            <p>Your order <strong>{order_id}</strong> has been successfully processed/updated.</p>
             
             <div style="background-color: #f8fafc; padding: 15px; border-radius: 6px; margin: 15px 0;">
-                <h4 style="margin-top: 0; color: #1e293b;">Delivery Summary</h4>
+                <h4 style="margin-top: 0; color: #1e293b;">Order Details</h4>
                 <p><strong>Order ID:</strong> {order_id}<br>
-                <strong>Product Delivered:</strong> {product_name} ({quantity} Boxes)<br>
+                <strong>Product:</strong> {product_name} ({quantity} Boxes)<br>
                 <strong>Total Amount:</strong> UGX {total_amount:,.0f}<br>
-                <strong>Exact Timestamp:</strong> {delivery_time}</p>
+                <strong>Timestamp:</strong> {delivery_time}</p>
             </div>
             
-            <p>Please log in to your account portal to acknowledge receipt and verify the batch details.</p>
+            <p>Please log in to your account portal to track status and manage payment details.</p>
             <p style="font-size: 0.85rem; color: #64748b;">MedSupply Uganda Operations Team<br>Contact: +256763212490</p>
         </div>
     </body>
@@ -126,8 +126,11 @@ def send_delivery_email(recipient_email, recipient_name, order_id, product_name,
     """
 
     try:
+        if "smtp" not in st.secrets:
+            return False, "SMTP credentials missing in st.secrets. Please configure secrets.toml."
+
         smtp_server = st.secrets["smtp"]["server"]
-        smtp_port = st.secrets["smtp"]["port"]
+        smtp_port = int(st.secrets["smtp"]["port"])
         sender_email = st.secrets["smtp"]["email"]
         sender_password = st.secrets["smtp"]["password"]
 
@@ -137,12 +140,19 @@ def send_delivery_email(recipient_email, recipient_name, order_id, product_name,
         msg["To"] = recipient_email
         msg.attach(MIMEText(html_content, "html"))
 
-        with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
-            server.login(sender_email, sender_password)
-            server.sendmail(sender_email, recipient_email, msg.as_string())
-        return True, "Email sent via SMTP server"
-    except Exception:
-        return False, f"Simulated Email Notification generated for {recipient_email}"
+        if smtp_port == 465:
+            with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
+                server.login(sender_email, sender_password)
+                server.sendmail(sender_email, recipient_email, msg.as_string())
+        else:
+            with smtplib.SMTP(smtp_server, smtp_port) as server:
+                server.starttls()
+                server.login(sender_email, sender_password)
+                server.sendmail(sender_email, recipient_email, msg.as_string())
+
+        return True, f"Email successfully sent to {recipient_email}"
+    except Exception as e:
+        return False, f"Failed to send email to {recipient_email}: {str(e)}"
 
 
 # --- 3. GLOBAL SHARED STATE INITIALIZATION ---
@@ -607,8 +617,24 @@ elif choice == "🛒 Place New Order":
                     db["outlets"].loc[db["outlets"]["Business Name"] ==
                                       user_info["business_name"], "Used Credit (UGX)"] += total_price
 
-                st.success(
-                    f"✅ Order **{order_id}** recorded! Email notifications configured for **{recipient_email}**.")
+                # --- TRIGGER ACTUAL EMAIL DISPATCH HERE ---
+                exact_time_now = datetime.datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+                email_sent, email_msg = send_delivery_email(
+                    recipient_email=recipient_email,
+                    recipient_name=recipient_name,
+                    order_id=order_id,
+                    product_name=selected_item_name,
+                    quantity=quantity,
+                    total_amount=total_price,
+                    delivery_time=exact_time_now
+                )
+
+                if email_sent:
+                    st.success(
+                        f"✅ Order **{order_id}** recorded! Email notification successfully sent to **{recipient_email}**.")
+                else:
+                    st.warning(
+                        f"✅ Order **{order_id}** recorded, but email dispatch failed:\n`{email_msg}`")
 
 # CHOICE: DELIVERY NOTIFICATIONS
 elif choice == "🔔 Delivery Notifications":
@@ -913,7 +939,7 @@ elif choice == "📦 Inventory Management":
 
             if add_submit:
                 if not prod_name or not item_id or not batch_no:
-                    st.error("⚠️️ Please fill in all required fields.")
+                    st.error("⚠️ Please fill in all required fields.")
                 else:
                     new_item = {
                         "Item ID": item_id,
