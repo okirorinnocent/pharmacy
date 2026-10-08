@@ -210,21 +210,52 @@ TABLES = ("users",) + tuple(FRAMES)
 # ======================================================================
 def _sb():
     url, key = secret("SUPABASE_URL"), secret("SUPABASE_KEY")
-    return (str(url).rstrip("/"), str(key)) if url and key else None
+    if not (url and key):
+        return None
+    url = str(url).strip().strip("\"'").rstrip("/")
+    if not url.startswith("http"):
+        url = "https://" + url
+    # tolerate the API path being pasted in
+    url = re.sub(r"/rest/v1$", "", url)
+    return url, str(key).strip().strip("\"'")
+
+
+def _explain(e):
+    """Turn a low-level error into something the owner can act on."""
+    if isinstance(e, requests.exceptions.ConnectionError):
+        return ("Cannot reach Supabase. The project may be paused (restore it in the Supabase dashboard) "
+                "or SUPABASE_URL is misspelled.")
+    if isinstance(e, requests.exceptions.Timeout):
+        return "Supabase did not answer in time. Try again in a moment."
+    if isinstance(e, requests.exceptions.HTTPError) and e.response is not None:
+        c = e.response.status_code
+        if c in (401, 403):
+            return "Supabase rejected the key. Use the service_role key in SUPABASE_KEY."
+        if c == 404:
+            return "The app_state table was not found. Run the one-time SQL from the top of app.py."
+        return f"Supabase returned HTTP {c}."
+    return str(e)[:150]
 
 
 def backend_read():
     """Returns ('ok', text) | ('empty', None) | ('error', message)."""
     sb = _sb()
     if sb:
-        try:
-            r = requests.get(f"{sb[0]}/rest/v1/app_state", params={"id": "eq.main", "select": "data"},
-                             headers={"apikey": sb[1], "Authorization": f"Bearer {sb[1]}"}, timeout=10)
-            r.raise_for_status()
-            rows = r.json()
-            return ("ok", rows[0]["data"]) if rows else ("empty", None)
-        except Exception as e:
-            return "error", str(e)[:150]
+        last = None
+        for attempt in range(3):  # retry temporary network failures
+            try:
+                r = requests.get(f"{sb[0]}/rest/v1/app_state", params={"id": "eq.main", "select": "data"},
+                                 headers={"apikey": sb[1], "Authorization": f"Bearer {sb[1]}"}, timeout=10)
+                r.raise_for_status()
+                rows = r.json()
+                return ("ok", rows[0]["data"]) if rows else ("empty", None)
+            except requests.exceptions.HTTPError as e:
+                # wrong key or missing table won't fix itself, so no retry
+                return "error", _explain(e)
+            except Exception as e:
+                last = e
+                time.sleep(1 + attempt)
+        return "error", _explain(last)
     if os.path.exists(DB_FILE):
         try:
             with open(DB_FILE, encoding="utf-8") as f:
@@ -238,10 +269,17 @@ def backend_write(blob):
     sb = _sb()
     try:
         if sb:
-            r = requests.post(f"{sb[0]}/rest/v1/app_state", timeout=10, json={"id": "main", "data": blob},
-                              headers={"apikey": sb[1], "Authorization": f"Bearer {sb[1]}",
-                                       "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates"})
-            return r.status_code in (200, 201, 204)
+            for attempt in range(2):
+                try:
+                    r = requests.post(f"{sb[0]}/rest/v1/app_state", timeout=10, json={"id": "main", "data": blob},
+                                      headers={"apikey": sb[1], "Authorization": f"Bearer {sb[1]}",
+                                               "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates"})
+                    if r.status_code in (200, 201, 204):
+                        return True
+                except requests.exceptions.RequestException:
+                    pass
+                time.sleep(1)
+            return False
         with open(DB_FILE + ".tmp", "w", encoding="utf-8") as f:
             f.write(blob)
         os.replace(DB_FILE + ".tmp", DB_FILE)
@@ -467,8 +505,11 @@ def get_attempts(): return {}
 try:
     db = get_db()
 except Exception as e:
-    st.error(f"Could not open the database ({e}). The app stopped so that no data is overwritten. "
-             "Check the Supabase settings in Secrets and reload.")
+    st.error(f"Could not open the database: {e}\n\n"
+             "The app stopped so that no data is overwritten. Fix the Supabase settings in Secrets "
+             "(or restore the paused project), then press the button below.")
+    if st.button("Try again", type="primary"):
+        st.rerun()
     st.stop()
 LOCK, SAVER, ATTEMPTS, ss = get_lock(), get_saver(), get_attempts(), st.session_state
 sync_inventory()
