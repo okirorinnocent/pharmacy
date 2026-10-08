@@ -1636,6 +1636,41 @@ elif page == "inv":
             log(f"Wrote off {n_exp} expired boxes")
             ss.flash = f"Wrote off {n_exp} expired boxes."
             st.rerun()
+        st.markdown("**Correct a batch**")
+        st.caption("Double-click a cell to change the batch number, expiry date or number of boxes, "
+                   "then press Save batch changes. Product stock updates automatically.")
+        if bt.empty:
+            st.caption("No batches yet. Use the Receive stock tab to add one.")
+        else:
+            bview = bt.copy()
+            bview.insert(1, "Product", bview["Item ID"].map(nm))
+            bedit = st.data_editor(
+                bview, hide_index=True, key="batch_editor", num_rows="fixed", disabled=["Item ID", "Product"],
+                column_config={"Expiry Date": st.column_config.DateColumn("Expiry Date", format="YYYY-MM-DD"),
+                               "Qty": st.column_config.NumberColumn("Boxes", min_value=0, step=1)}, **FULL)
+            if st.button("Save batch changes", type="primary"):
+                nb = bedit.drop(columns=["Product"]).copy()
+                nb["Batch Number"] = nb["Batch Number"].fillna(
+                    "").astype(str).str.strip()
+                nb["Qty"] = pd.to_numeric(
+                    nb["Qty"], errors="coerce").fillna(0).astype(int)
+                nb["Expiry Date"] = pd.to_datetime(
+                    nb["Expiry Date"], errors="coerce").dt.date
+                if (nb["Batch Number"] == "").any():
+                    st.error("Every batch needs a batch number.")
+                elif nb["Expiry Date"].isna().any():
+                    st.error("Every batch needs a valid expiry date.")
+                elif nb.duplicated(["Item ID", "Batch Number"]).any():
+                    st.error(
+                        "Two batches of the same product cannot share a batch number.")
+                else:
+                    with LOCK:
+                        db["batches"] = nb[BATCH_COLS].reset_index(drop=True)
+                        sync_inventory()
+                    log("Edited batch details")
+                    ss.pop("batch_editor", None)
+                    ss.flash = "Batch changes saved."
+                    st.rerun()
     with t3, st.form("receive"):
         st.caption(
             "Record a new delivery from your supplier. It is added as its own batch; older batches stay on record.")
