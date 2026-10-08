@@ -354,6 +354,11 @@ def sync_inventory(d=None):
     """Stock Quantity = in-date boxes across batches; Batch/Expiry shown = earliest-expiring sellable batch."""
     d = d if d is not None else db
     inv, bt = d["inventory"], d["batches"]
+    for df_ in (inv, bt):  # keep expiry dates as plain dates, never a datetime column
+        df_["Expiry Date"] = pd.Series(
+            [pd.to_datetime(x).date() if pd.notna(
+                x) else None for x in df_["Expiry Date"]],
+            index=df_.index, dtype=object)
     for i, r in inv.iterrows():
         mine = bt[(bt["Item ID"] == r["Item ID"]) & (bt["Qty"] > 0)]
         if mine.empty:
