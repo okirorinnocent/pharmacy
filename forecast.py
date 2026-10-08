@@ -116,7 +116,8 @@ def add_features(w):
     woy = w["week"].dt.isocalendar().week.astype(int)
     w["woy_sin"], w["woy_cos"] = np.sin(
         2 * np.pi * woy / 52), np.cos(2 * np.pi * woy / 52)
-    w["item_code"] = w["item_id"].str[-3:].astype(int)
+    w["item_code"] = pd.to_numeric(w["item_id"].str.extract(
+        r"(\d+)$")[0], errors="coerce").fillna(0).astype(int)
     return w
 
 
@@ -170,16 +171,18 @@ def forecast(bundle, history, prices, weeks=4, today=None):
 
 
 # ----------------------------------------------------------------------
-# Streamlit tab
+# App integration
 # ----------------------------------------------------------------------
-def render_forecast_tab(st, db, ugx, **full):
+def build_forecast(db):
+    """Returns a dict with the forecast table, or None when there are no products yet."""
     inv = db["inventory"]
+    if inv.empty:
+        return None
     prices = dict(zip(inv["Item ID"], inv["Unit Price (UGX)"].astype(float)))
     bundle = load_bundle()
-    # first visit: train now (a few seconds) and cache the file for next time
+    # first use: train now (a few seconds) and cache the file for next time
     if bundle is None:
-        with st.spinner("Training the demand model for the first time..."):
-            train(prices, verbose=False)
+        train(prices, verbose=False)
         bundle = load_bundle()
     this_week = monday(dt.date.today())
     real = weekly_from_orders(db["orders"], prices)
@@ -189,7 +192,6 @@ def render_forecast_tab(st, db, ugx, **full):
     else:
         hist = synthetic_history(prices, end=this_week)
         note = f"Demo mode: only {span} week(s) of real orders so far, so the forecast uses simulated history. It switches to real data after 8 weeks."
-    st.caption(note)
     fc = forecast(bundle, hist, prices, weeks=4)
     need = fc.groupby("item_id")["forecast"].sum()
     rows = []
@@ -202,15 +204,35 @@ def render_forecast_tab(st, db, ugx, **full):
                      "Weeks of cover": round(min(cover, 99), 1),
                      "Suggested reorder (boxes)": max(0, int(np.ceil(n4 + lvl - stock))),
                      "Risk": "Stockout soon" if cover < 2 else "Watch" if cover < 4 else "OK"})
-    df = pd.DataFrame(rows).sort_values("Weeks of cover")
-    st.dataframe(df, hide_index=True, **full)
+    table = pd.DataFrame(rows).sort_values("Weeks of cover")
+    return {"table": table, "fc": fc, "hist": hist, "prices": prices, "note": note, "this_week": this_week}
+
+
+def stockout_risks(db):
+    """Names of in-stock products forecast to run out within 2 weeks (for the dashboard)."""
+    res = build_forecast(db)
+    if res is None:
+        return []
+    t = res["table"]
+    return t[(t["Risk"] == "Stockout soon") & (t["In stock"] > 0)]["Product"].tolist()
+
+
+def render_forecast_tab(st, db, ugx, **full):
+    with st.spinner("Preparing the forecast..."):
+        res = build_forecast(db)
+    if res is None:
+        st.info("Add products to the catalogue to see demand forecasts.")
+        return
+    inv = db["inventory"]
+    st.caption(res["note"])
+    st.dataframe(res["table"], hide_index=True, **full)
     pick = st.selectbox("Show history and forecast for",
                         inv["Product Name"], key="fc_pick")
     iid = inv.loc[inv["Product Name"] == pick, "Item ID"].iloc[0]
-    past = fill_weeks(hist, prices, this_week)
+    past = fill_weeks(res["hist"], res["prices"], res["this_week"])
     past = past[past["item_id"] == iid].tail(26).set_index("week")[
         "qty"].rename("Actual")
-    nxt = fc[fc["item_id"] == iid].set_index(
+    nxt = res["fc"][res["fc"]["item_id"] == iid].set_index(
         "week")["forecast"].rename("Forecast")
     st.line_chart(pd.concat([past, nxt], axis=1), color=[
                   "#0E6B63", "#F2B600"], height=260)

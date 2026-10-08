@@ -1,10 +1,27 @@
+"""
+MedSupply Uganda - B2B pharma marketplace (single-file Streamlit app).
+
+Streamlit Cloud > Settings > Secrets:
+    ADMIN_EMAIL    = "you@example.com"
+    ADMIN_PASSWORD = "a-long-random-password"
+    DEMO_DATA      = false        # false = no sample customer/orders, no fake payments (use true while testing)
+    SUPABASE_URL   = "https://xxxx.supabase.co"
+    SUPABASE_KEY   = "service_role key (server-side only; never the anon key)"
+    COMPANY_TIN    = "your URA TIN"      # optional, printed on invoices
+    [smtp]                                # needed for order emails and password reset
+    email = "..." ; password = "..." ; server = "smtp.gmail.com" ; port = 465
+    # optional: WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_TOKEN
+
+One-time Supabase SQL (SQL editor):
+    create table app_state (id text primary key, data text not null, updated_at timestamptz default now());
+    alter table app_state enable row level security;
+"""
 import datetime as dt
 import hashlib
 import hmac
 import html
 import json
 import os
-import pickle
 import random
 import re
 import secrets
@@ -22,12 +39,22 @@ import streamlit as st
 st.set_page_config(page_title="MedSupply Uganda | B2B Pharma Marketplace", page_icon="💊",
                    layout="wide", initial_sidebar_state="expanded")
 
+
 # ======================================================================
 # CONFIG & HELPERS
 # ======================================================================
+def secret(key, default=None):
+    try:
+        return st.secrets[key]
+    except Exception:
+        return default
+
+
+DEMO = str(secret("DEMO_DATA", True)).strip(
+).lower() not in ("false", "0", "no")
 MANAGER = {"name": "Okiror Innocent", "phone": "+256763212490"}
-COMPANY = {"name": "MedSupply Uganda Limited",
-           "bank": "Stanbic Bank Uganda", "acct": "9030012345678"}
+COMPANY = {"name": "MedSupply Uganda Limited", "bank": "Stanbic Bank Uganda", "acct": "9030012345678",
+           "tin": secret("COMPANY_TIN", "")}
 STATUSES = ["Processing", "Dispatched", "Delivered"]
 STEP_ICONS = ["🕒", "🚚", "✅"]
 CATS = {"Antibiotics": "💊", "Analgesics": "🩹", "Antimalarial": "🦟",
@@ -35,7 +62,11 @@ CATS = {"Antibiotics": "💊", "Analgesics": "🩹", "Antimalarial": "🦟",
 PAY_METHODS = ["MTN Mobile Money", "Airtel Money",
                "Trade Credit Line", "Cash on Delivery"]
 UNPAID = ("Pending Payment", "On Credit", "Pay on Delivery")
-DB_FILE = os.environ.get("MEDSUPPLY_DB", "medsupply_db.pkl")
+DB_FILE = os.environ.get("MEDSUPPLY_DB", "medsupply_db.json")
+PW_ITER = 600_000
+# VAT by category, e.g. {"Medical Consumables": 0.18}. Left empty (no VAT line) until you confirm the
+# correct treatment of each category with URA or your accountant.
+VAT_RATES = {}
 
 # Streamlit 1.50+ replaced use_container_width with width="stretch"
 _v = tuple(int(x) for x in re.findall(r"\d+", st.__version__)[:2])
@@ -58,18 +89,12 @@ def valid_email(e): return re.match(
 
 
 def disc_for(q): return 0.10 if q >= 50 else 0.05 if q >= 10 else 0.0
-
-
-def secret(key, default=None):
-    try:
-        return st.secrets[key]
-    except Exception:
-        return default
+def vat_rate(cat): return float(VAT_RATES.get(cat, 0.0))
 
 
 def hp(p, salt=None):
     salt = salt or secrets.token_hex(8)
-    return f"{salt}${hashlib.pbkdf2_hmac('sha256', p.encode(), salt.encode(), 120_000).hex()}"
+    return f"{salt}${hashlib.pbkdf2_hmac('sha256', p.encode(), salt.encode(), PW_ITER).hex()}"
 
 
 def check_pw(p, stored):
@@ -162,58 +187,200 @@ button[kind=primary]:hover:not(:disabled){background:#0A524C}
 
 
 # ======================================================================
-# DATA LAYER (shared in memory, saved to disk)
+# TABLE SCHEMAS
 # ======================================================================
 ORDER_COLS = ["OrderID", "Outlet", "Recipient Name", "Recipient Phone", "Recipient Email", "Delivery Location", "Items",
               "Product Name", "Batch Number", "Quantity", "Subtotal (UGX)", "Total Amount (UGX)", "Payment Method",
               "Payment Status", "Item Verified", "Status", "Date", "Placed At", "Dispatch Time", "Delivery Time",
-              "Driver", "Driver Phone", "ETA", "Notes", "Timeline"]
+              "Driver", "Driver Phone", "ETA", "Notes", "Timeline", "Account", "VAT (UGX)"]
 TICKET_COLS = ["TicketID", "OrderID", "Outlet", "Contact",
                "Issue", "Details", "Status", "Created", "Response"]
 INV_COLS = ["Item ID", "Product Name", "Category", "Unit Price (UGX)", "Stock Quantity", "Reorder Level",
-            "Batch Number", "Expiry Date", "NDA Reg No"]
-TABLES = ("users", "outlets", "inventory",
-          "orders", "tickets", "audit", "notifs")
+            "Batch Number", "Expiry Date", "NDA Reg No", "Cost Price (UGX)", "Rx Only"]
+BATCH_COLS = ["Item ID", "Batch Number", "Expiry Date", "Qty"]
+OUTLET_COLS = ["ID", "Business Name", "Contact Name", "Phone", "Email", "Location", "License No", "Verified",
+               "Credit Limit (UGX)", "Used Credit (UGX)", "Status"]
+FRAMES = {"outlets": OUTLET_COLS, "inventory": INV_COLS, "batches": BATCH_COLS, "orders": ORDER_COLS,
+          "tickets": TICKET_COLS, "audit": ["Time", "Actor", "Action"], "notifs": ["To", "Time", "Text", "Read"]}
+TABLES = ("users",) + tuple(FRAMES)
 
 
-def build_order(oid, outlet, name, phone, email, addr, lines, method, notes="", ts=None):
+# ======================================================================
+# PERSISTENCE (Supabase if configured, otherwise a local JSON file)
+# ======================================================================
+def _sb():
+    url, key = secret("SUPABASE_URL"), secret("SUPABASE_KEY")
+    return (str(url).rstrip("/"), str(key)) if url and key else None
+
+
+def backend_read():
+    """Returns ('ok', text) | ('empty', None) | ('error', message)."""
+    sb = _sb()
+    if sb:
+        try:
+            r = requests.get(f"{sb[0]}/rest/v1/app_state", params={"id": "eq.main", "select": "data"},
+                             headers={"apikey": sb[1], "Authorization": f"Bearer {sb[1]}"}, timeout=10)
+            r.raise_for_status()
+            rows = r.json()
+            return ("ok", rows[0]["data"]) if rows else ("empty", None)
+        except Exception as e:
+            return "error", str(e)[:150]
+    if os.path.exists(DB_FILE):
+        try:
+            with open(DB_FILE, encoding="utf-8") as f:
+                return "ok", f.read()
+        except Exception as e:
+            return "error", str(e)[:150]
+    return "empty", None
+
+
+def backend_write(blob):
+    sb = _sb()
+    try:
+        if sb:
+            r = requests.post(f"{sb[0]}/rest/v1/app_state", timeout=10, json={"id": "main", "data": blob},
+                              headers={"apikey": sb[1], "Authorization": f"Bearer {sb[1]}",
+                                       "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates"})
+            return r.status_code in (200, 201, 204)
+        with open(DB_FILE + ".tmp", "w", encoding="utf-8") as f:
+            f.write(blob)
+        os.replace(DB_FILE + ".tmp", DB_FILE)
+        return True
+    except Exception:
+        return False
+
+
+def _clean(v):
+    if v is None or (not isinstance(v, (str, list, dict)) and pd.isna(v)):
+        return None
+    if hasattr(v, "item") and not isinstance(v, str):
+        v = v.item()
+    if isinstance(v, dt.date):
+        return v.isoformat()
+    return v
+
+
+def serialize(d=None):
+    d = d if d is not None else db
+    out = {"v": 2, "users": d["users"]}
+    for t in FRAMES:
+        out[t] = [{k: _clean(v) for k, v in r.items()}
+                  for r in d[t].to_dict("records")]
+    return json.dumps(out)
+
+
+def fix_types(d):
+    inv, bt, o, ot, n = d["inventory"], d["batches"], d["orders"], d["outlets"], d["notifs"]
+    for c in ("Unit Price (UGX)", "Cost Price (UGX)"):
+        inv[c] = pd.to_numeric(inv[c], errors="coerce").fillna(0.0)
+    for c, dflt in (("Stock Quantity", 0), ("Reorder Level", 100)):
+        inv[c] = pd.to_numeric(
+            inv[c], errors="coerce").fillna(dflt).astype(int)
+    inv["Rx Only"] = inv["Rx Only"].fillna(False).astype(bool)
+    inv["Expiry Date"] = pd.to_datetime(
+        inv["Expiry Date"], errors="coerce").dt.date
+    bt["Qty"] = pd.to_numeric(bt["Qty"], errors="coerce").fillna(0).astype(int)
+    bt["Expiry Date"] = pd.to_datetime(
+        bt["Expiry Date"], errors="coerce").dt.date
+    for c in ("Credit Limit (UGX)", "Used Credit (UGX)"):
+        ot[c] = pd.to_numeric(ot[c], errors="coerce").fillna(0)
+    ot["Verified"] = ot["Verified"].fillna(False).astype(bool)
+    n["Read"] = n["Read"].fillna(False).astype(bool)
+    numeric = ("Quantity", "Subtotal (UGX)", "Total Amount (UGX)", "VAT (UGX)")
+    for c in ORDER_COLS:
+        o[c] = pd.to_numeric(o[c], errors="coerce").fillna(
+            0) if c in numeric else o[c].fillna("")
+    for t in ("tickets", "audit"):
+        d[t] = d[t].fillna("")
+    return d
+
+
+def deserialize(s):
+    raw = json.loads(s)
+    d = {"users": raw.get("users", {})}
+    for t, cols in FRAMES.items():
+        recs = raw.get(t) or []
+        d[t] = pd.DataFrame(
+            recs, columns=cols) if recs else pd.DataFrame(columns=cols)
+    d = fix_types(d)
+    if d["batches"].empty and not d["inventory"].empty:  # tolerate data saved without batches
+        d["batches"] = pd.DataFrame({"Item ID": d["inventory"]["Item ID"], "Batch Number": d["inventory"]["Batch Number"],
+                                     "Expiry Date": d["inventory"]["Expiry Date"], "Qty": d["inventory"]["Stock Quantity"]})
+    return d
+
+
+# ======================================================================
+# SEED DATA
+# ======================================================================
+def sync_inventory(d=None):
+    """Stock Quantity = in-date boxes across batches; Batch/Expiry shown = earliest-expiring sellable batch."""
+    d = d if d is not None else db
+    inv, bt = d["inventory"], d["batches"]
+    for i, r in inv.iterrows():
+        mine = bt[(bt["Item ID"] == r["Item ID"]) & (bt["Qty"] > 0)]
+        if mine.empty:
+            inv.at[i, "Stock Quantity"] = 0
+            continue
+        mine = mine.assign(_d=mine["Expiry Date"].map(exp_days))
+        ok = mine[mine["_d"] >= 0]
+        inv.at[i, "Stock Quantity"] = int(ok["Qty"].sum())
+        pick = (ok if len(ok) else mine).sort_values("_d").iloc[0]
+        inv.at[i, "Batch Number"] = pick["Batch Number"]
+        inv.at[i, "Expiry Date"] = pick["Expiry Date"]
+
+
+def build_order(oid, outlet, name, phone, email, addr, lines, method, notes="", ts=None, account=""):
     ts = ts or now()
     sub = sum(l["qty"] * l["price"] for l in lines)
-    total = sum(l["qty"] * l["price"] * (1 - l["disc"]) for l in lines)
+    net = sum(l["qty"] * l["price"] * (1 - l["disc"]) for l in lines)
+    vat = sum(l["qty"] * l["price"] * (1 - l["disc"])
+              * l.get("vat", 0.0) for l in lines)
     pay = {"Trade Credit Line": "On Credit",
            "Cash on Delivery": "Pay on Delivery"}.get(method, "Pending Payment")
+    per = {}
+    for l in lines:
+        per[l["name"].split(" (")[0]] = per.get(
+            l["name"].split(" (")[0], 0) + l["qty"]
     return {"OrderID": oid, "Outlet": outlet, "Recipient Name": name, "Recipient Phone": phone, "Recipient Email": email,
             "Delivery Location": addr, "Items": json.dumps(lines),
-            "Product Name": ", ".join(f"{l['name'].split(' (')[0]} ×{l['qty']}" for l in lines),
+            "Product Name": ", ".join(f"{k} ×{v}" for k, v in per.items()),
             "Batch Number": ", ".join(sorted({l["batch"] for l in lines})), "Quantity": sum(l["qty"] for l in lines),
-            "Subtotal (UGX)": sub, "Total Amount (UGX)": total, "Payment Method": method, "Payment Status": pay,
+            "Subtotal (UGX)": sub, "Total Amount (UGX)": net + vat, "Payment Method": method, "Payment Status": pay,
             "Item Verified": "Pending Inspection", "Status": "Processing", "Date": ts[:10], "Placed At": ts,
             "Dispatch Time": "Pending", "Delivery Time": "Pending", "Driver": "", "Driver Phone": "", "ETA": "",
-            "Notes": notes, "Timeline": json.dumps([[ts, "Order placed"]])}
+            "Notes": notes, "Timeline": json.dumps([[ts, "Order placed"]]), "Account": account, "VAT (UGX)": vat}
 
 
 def seed():
-    admin_pw = secret("ADMIN_PASSWORD", "admin")
-    users = {
-        "okirorinnocent49@gmail.com": dict(password=hp(admin_pw), business_name="MedSupply HQ", contact_name="Okiror Innocent",
-                                           phone="+256763212490", location="Kampala Central", role="Staff / Admin",
-                                           favs=[], default_pw=(admin_pw == "admin")),
-        "sarah@carepharma.com": dict(password=hp("password123"), business_name="Kampala Care Pharmacy", contact_name="Dr. Sarah",
-                                     phone="+256771234567", location="Kampala Central", role="Customer / Buyer",
-                                     favs=["INV-001"], default_pw=True)}
+    admin_pw = secret("ADMIN_PASSWORD")
+    generated = not admin_pw
+    if generated:  # never ship a guessable default
+        admin_pw = secrets.token_urlsafe(9)
+        print(
+            f"[MedSupply] ADMIN_PASSWORD is not set. One-time admin password: {admin_pw}", flush=True)
+    admin = secret("ADMIN_EMAIL", "okirorinnocent49@gmail.com").strip().lower()
+    users = {admin: dict(password=hp(admin_pw), business_name="MedSupply HQ", contact_name=MANAGER["name"],
+                         phone=MANAGER["phone"], location="Kampala Central", role="Staff / Admin", favs=[],
+                         default_pw=generated)}
+    empty = {t: pd.DataFrame(columns=c) for t, c in FRAMES.items()}
+    if not DEMO:
+        return {"users": users, **empty}
+    users["sarah@carepharma.com"] = dict(password=hp("password123"), business_name="Kampala Care Pharmacy",
+                                         contact_name="Dr. Sarah", phone="+256771234567", location="Kampala Central",
+                                         role="Customer / Buyer", favs=["INV-001"], default_pw=True)
     outlets = pd.DataFrame([
         {"ID": "OUT-101", "Business Name": "Kampala Care Pharmacy", "Contact Name": "Dr. Sarah", "Phone": "+256771234567",
          "Email": "sarah@carepharma.com", "Location": "Kampala Central", "License No": "PH-KLA-0412", "Verified": True,
          "Credit Limit (UGX)": 5000000, "Used Credit (UGX)": 1500000, "Status": "Active"},
         {"ID": "OUT-102", "Business Name": "Mbarara Express Clinic", "Contact Name": "John Doe", "Phone": "+256788990011",
          "Email": "john@mbararaclinic.com", "Location": "Mbarara Town", "License No": "CL-MBR-0233", "Verified": True,
-         "Credit Limit (UGX)": 2500000, "Used Credit (UGX)": 425000, "Status": "Active"}])
+         "Credit Limit (UGX)": 2500000, "Used Credit (UGX)": 425000, "Status": "Active"}], columns=OUTLET_COLS)
     d = dt.date
-    inv = pd.DataFrame([
+    base = [
         ["INV-001", "Amoxicillin 500mg (Box of 100)", "Antibiotics", 35000,
          450, 150, "AMX-2026-09A", d(2028, 6, 30), "NDA/UG/MED-4821"],
         ["INV-002", "Paracetamol 500mg (Box of 100)", "Analgesics", 12000,
-         120, 150, "PAR-2026-01C", d(2027, 12, 15), "NDA/UG/MED-1029"],
+         80, 150, "PAR-2026-01C", d(2027, 12, 15), "NDA/UG/MED-1029"],
         ["INV-003", "Coartem 20/120 (Box of 30)", "Antimalarial", 85000,
          180, 200, "CRT-2026-11B", d(2027, 8, 20), "NDA/UG/MED-9930"],
         ["INV-004", "Ciprofloxacin 500mg (Box of 100)", "Antibiotics", 48000,
@@ -224,79 +391,113 @@ def seed():
          28000, 90, 100, "GLV-2026-07F", d(2029, 1, 31), "NDA/UG/DEV-0731"],
         ["INV-007", "ORS Sachets (Box of 100)", "Fluids & Nutrition", 22000,
          260, 100, "ORS-2026-02B", d(2027, 1, 15), "NDA/UG/MED-3318"],
-        ["INV-008", "Normal Saline 0.9% 500ml (Carton of 20)", "Fluids & Nutrition", 64000, 45, 60, "NSL-2026-08C", d(2027, 9, 30), "NDA/UG/MED-7746"]],
-        columns=INV_COLS)
-    # a few delivered orders from past weeks so the charts have something to show
+        ["INV-008", "Normal Saline 0.9% 500ml (Carton of 20)", "Fluids & Nutrition", 64000, 45, 60, "NSL-2026-08C", d(2027, 9, 30), "NDA/UG/MED-7746"]]
+    inv = pd.DataFrame(base, columns=INV_COLS[:9])
+    inv["Cost Price (UGX)"] = (inv["Unit Price (UGX)"] * 0.78).round(-2)
+    inv["Rx Only"] = inv["Category"].isin(["Antibiotics", "Antimalarial"])
+    batches = pd.DataFrame([[r[0], r[6], r[7], r[4]]
+                           for r in base], columns=BATCH_COLS)
+    extra = pd.DataFrame([["INV-002", "PAR-2025-08B", today() +
+                         dt.timedelta(days=100), 40]], columns=BATCH_COLS)
+    # a short-dated batch that FEFO ships first
+    batches = pd.concat([batches, extra], ignore_index=True)
+    sync_inventory({"inventory": inv, "batches": batches})
     rng, recs, rows = random.Random(7), inv.to_dict("records"), []
     customers = [("Kampala Care Pharmacy", "Dr. Sarah", "+256771234567", "sarah@carepharma.com", "Kampala Central, Plot 14 Acacia Ave"),
                  ("Mbarara Express Clinic", "John Doe", "+256788990011", "john@mbararaclinic.com", "Mbarara Town, High Street Plot 8")]
 
-    def line(p, q): return {"id": p["Item ID"], "name": p["Product Name"], "batch": p["Batch Number"], "qty": q,
-                            "price": float(p["Unit Price (UGX)"]), "disc": disc_for(q)}
+    def line(p, q): return {"id": p["Item ID"], "name": p["Product Name"], "batch": p["Batch Number"], "exp": str(p["Expiry Date"]),
+                            "qty": q, "price": float(p["Unit Price (UGX)"]), "disc": disc_for(q),
+                            "cost": float(p["Cost Price (UGX)"]), "vat": vat_rate(p["Category"])}
     for k in range(14):
         c, day = rng.choice(customers), today() - \
             dt.timedelta(days=rng.randint(4, 45))
         lines = [line(p, rng.choice([2, 5, 10, 12, 20, 50]))
                  for p in rng.sample(recs, rng.randint(1, 3))]
         ts = f"{day} 09:15 AM"
-        o = build_order(f"ORD-{1001 + k}", *c, lines, rng.choice(
-            ["MTN Mobile Money", "Airtel Money", "Cash on Delivery"]), ts=ts)
+        o = build_order(f"ORD-{1001 + k}", *c, lines, rng.choice(["MTN Mobile Money", "Airtel Money", "Cash on Delivery"]),
+                        ts=ts, account=c[3])
         o.update({"Status": "Delivered", "Payment Status": "Paid", "Item Verified": "Verified Correct",
                   "Dispatch Time": f"{day} 11:00 AM", "Delivery Time": f"{day} 03:30 PM", "Driver": "Moses K.", "Driver Phone": "+256700111222",
                   "Timeline": json.dumps([[ts, "Order placed"], [f"{day} 11:00 AM", "Dispatched"], [f"{day} 03:30 PM", "Delivered"]])})
         rows.append(o)
     d3, d1 = today() - dt.timedelta(days=3), today() - dt.timedelta(days=1)
-    o = build_order(
-        "ORD-9901", *customers[0], [line(recs[0], 5)], "MTN Mobile Money", ts=f"{d3} 08:40 AM")
+    o = build_order("ORD-9901", *customers[0], [line(recs[0], 5)],
+                    "MTN Mobile Money", ts=f"{d3} 08:40 AM", account=customers[0][3])
     o.update({"Status": "Delivered", "Payment Status": "Paid", "Item Verified": "Verified Correct", "Dispatch Time": f"{d3} 09:30 AM",
               "Delivery Time": f"{d3} 02:15 PM", "Driver": "Moses K.", "Driver Phone": "+256700111222",
               "Timeline": json.dumps([[f"{d3} 08:40 AM", "Order placed"], [f"{d3} 09:30 AM", "Dispatched"], [f"{d3} 02:15 PM", "Delivered"]])})
     rows.append(o)
-    o = build_order(
-        "ORD-9902", *customers[1], [line(recs[2], 5)], "Trade Credit Line", ts=f"{d1} 10:20 AM")
+    o = build_order("ORD-9902", *customers[1], [line(recs[2], 5)],
+                    "Trade Credit Line", ts=f"{d1} 10:20 AM", account=customers[1][3])
     o.update({"Status": "Dispatched", "Dispatch Time": f"{d1} 11:00 AM", "Driver": "Grace A.", "Driver Phone": "+256700333444",
               "ETA": "Today by 5 PM", "Timeline": json.dumps([[f"{d1} 10:20 AM", "Order placed"], [f"{d1} 11:00 AM", "Dispatched"]])})
     rows.append(o)
     orders = pd.DataFrame(rows, columns=ORDER_COLS).sort_values(
         "Date", ascending=False, kind="stable").reset_index(drop=True)
-    return {"users": users, "outlets": outlets, "inventory": inv, "orders": orders,
-            "tickets": pd.DataFrame(columns=TICKET_COLS), "audit": pd.DataFrame(columns=["Time", "Actor", "Action"]),
-            "notifs": pd.DataFrame(columns=["To", "Time", "Text", "Read"])}
+    return {**empty, "users": users, "outlets": outlets, "inventory": inv, "batches": batches, "orders": orders}
 
 
 @st.cache_resource
 def get_db():
-    if os.path.exists(DB_FILE):
-        try:
-            with open(DB_FILE, "rb") as f:
-                d = pickle.load(f)
-            if all(k in d for k in TABLES) and set(ORDER_COLS) <= set(d["orders"].columns):
-                return d
-        except Exception:
-            pass
-    return seed()
+    status, data = backend_read()
+    if status == "error":
+        raise RuntimeError(data)
+    if status == "ok":
+        return deserialize(data)
+    d = seed()
+    sync_inventory(d)
+    backend_write(serialize(d))
+    return d
 
 
 @st.cache_resource
 def get_lock(): return threading.RLock()
 
 
-db, LOCK, ss = get_db(), get_lock(), st.session_state
+@st.cache_resource
+def get_saver(): return {"lock": threading.Lock(),
+                         "ver": 0, "written": 0, "failed": False}
+
+
+@st.cache_resource
+def get_attempts(): return {}
+
+
+try:
+    db = get_db()
+except Exception as e:
+    st.error(f"Could not open the database ({e}). The app stopped so that no data is overwritten. "
+             "Check the Supabase settings in Secrets and reload.")
+    st.stop()
+LOCK, SAVER, ATTEMPTS, ss = get_lock(), get_saver(), get_attempts(), st.session_state
+sync_inventory()
+
+
+def _persist(v):
+    with SAVER["lock"]:
+        if v <= SAVER["written"]:
+            return  # a newer save already covered this one
+        with LOCK:
+            cur, blob = SAVER["ver"], serialize()
+        ok = backend_write(blob)
+        SAVER["failed"] = not ok
+        if ok:
+            SAVER["written"] = cur
 
 
 def save():
-    try:
-        with open(DB_FILE + ".tmp", "wb") as f:
-            pickle.dump({k: db[k] for k in TABLES}, f)
-        os.replace(DB_FILE + ".tmp", DB_FILE)
-    except Exception:
-        pass
+    with LOCK:
+        SAVER["ver"] += 1
+        v = SAVER["ver"]
+    threading.Thread(target=_persist, args=(v,), daemon=True).start()
 
 
 def add_row(table, row, cap=None):
-    rows = [row] + db[table].to_dict("records")
-    db[table] = pd.DataFrame(
-        rows[:cap] if cap else rows, columns=db[table].columns)
+    with LOCK:
+        rows = [row] + db[table].to_dict("records")
+        db[table] = pd.DataFrame(
+            rows[:cap] if cap else rows, columns=db[table].columns)
 
 
 def log(action):
@@ -358,8 +559,6 @@ def notify(o, headline):
 # ======================================================================
 ss.setdefault("user", None)
 ss.setdefault("cart", {})
-ss.setdefault("fails", 0)
-ss.setdefault("lock_until", 0.0)
 ss.setdefault("chat", [
               ("bot", "Hello! Ask me about **prices**, **stock**, **credit**, **delivery**, **order status** or the **manager**.")])
 user = db["users"].get(ss.user)
@@ -374,17 +573,25 @@ def get_order(oid): return db["orders"].loc[oidx(oid)]
 def lines_of(o): return json.loads(o["Items"])
 
 
+def customer_email(o):
+    """Notifications are keyed by the buyer's login email, not the delivery contact's email."""
+    acc = o.get("Account")
+    return acc if isinstance(acc, str) and acc else o["Recipient Email"]
+
+
 def upd(oid, **kw):
-    i = oidx(oid)
-    for k, v in kw.items():
-        db["orders"].at[i, k] = v
+    with LOCK:
+        i = oidx(oid)
+        for k, v in kw.items():
+            db["orders"].at[i, k] = v
 
 
 def event(oid, text):
-    i = oidx(oid)
-    tl = json.loads(db["orders"].at[i, "Timeline"])
-    tl.append([now(), text])
-    db["orders"].at[i, "Timeline"] = json.dumps(tl)
+    with LOCK:
+        i = oidx(oid)
+        tl = json.loads(db["orders"].at[i, "Timeline"])
+        tl.append([now(), text])
+        db["orders"].at[i, "Timeline"] = json.dumps(tl)
 
 
 def outlet_of(name):
@@ -393,9 +600,10 @@ def outlet_of(name):
 
 
 def adjust_credit(name, delta):
-    m = db["outlets"]["Business Name"] == name
-    db["outlets"].loc[m, "Used Credit (UGX)"] = (
-        db["outlets"].loc[m, "Used Credit (UGX)"] + delta).clip(lower=0)
+    with LOCK:
+        m = db["outlets"]["Business Name"] == name
+        db["outlets"].loc[m, "Used Credit (UGX)"] = (
+            db["outlets"].loc[m, "Used Credit (UGX)"] + delta).clip(lower=0)
 
 
 def my_orders():
@@ -403,41 +611,102 @@ def my_orders():
     return o if is_staff else o[o["Outlet"] == (user or {}).get("business_name", "")]
 
 
-def customer_email(o):
-    return o["Recipient Email"]
+# ---- batch stock (first-expiry-first-out) ----------------------------
+def allocate(iid, qty):
+    """Earliest-expiring in-date batches first. Returns [(batch, qty, expiry)] or None if not enough stock."""
+    bt = db["batches"]
+    mine = bt[(bt["Item ID"] == iid) & (bt["Qty"] > 0)]
+    mine = mine.assign(_d=mine["Expiry Date"].map(exp_days))
+    mine = mine[mine["_d"] >= 0].sort_values("_d")
+    if int(mine["Qty"].sum()) < qty:
+        return None
+    out, need = [], qty
+    for _, r in mine.iterrows():
+        take = min(need, int(r["Qty"]))
+        out.append((r["Batch Number"], take, r["Expiry Date"]))
+        need -= take
+        if need == 0:
+            break
+    return out
+
+
+def take_stock(iid, batch, qty):
+    with LOCK:
+        bt = db["batches"]
+        bt.loc[(bt["Item ID"] == iid) & (
+            bt["Batch Number"] == batch), "Qty"] -= qty
+
+
+def put_stock(l):
+    with LOCK:
+        bt = db["batches"]
+        m = (bt["Item ID"] == l["id"]) & (bt["Batch Number"] == l["batch"])
+        if m.any():
+            bt.loc[m, "Qty"] += l["qty"]
+        else:
+            add_row("batches", {"Item ID": l["id"], "Batch Number": l["batch"],
+                                "Expiry Date": pd.to_datetime(l.get("exp"), errors="coerce").date(), "Qty": l["qty"]})
+
+
+def receive_stock(iid, batch, qty, expiry):
+    with LOCK:
+        bt = db["batches"]
+        m = (bt["Item ID"] == iid) & (bt["Batch Number"] == batch)
+        if m.any():
+            have = bt.loc[m, "Expiry Date"].iloc[0]
+            if have != expiry:
+                return f"Batch {batch} already exists with expiry {have}. Use a new batch number or the same expiry."
+            bt.loc[m, "Qty"] += qty
+        else:
+            add_row("batches", {
+                    "Item ID": iid, "Batch Number": batch, "Expiry Date": expiry, "Qty": qty})
+        sync_inventory()
+    save()
+    return ""
 
 
 def cart_lines():
     inv = db["inventory"].set_index("Item ID", drop=False)
+    out_ = outlet_of(user["business_name"]) if user else None
+    verified = out_ is not None and bool(out_["Verified"])
     out = []
     for iid, q in list(ss.cart.items()):
         if iid not in inv.index:
             ss.cart.pop(iid, None)
             continue
         r = inv.loc[iid]
-        stock, bad = int(r["Stock Quantity"]), exp_days(r["Expiry Date"]) < 0
+        stock = int(r["Stock Quantity"])
+        why = ("Expired" if stock <= 0 and exp_days(r["Expiry Date"]) < 0 else "Out of stock" if stock <= 0
+               else "Needs licence verification" if bool(r["Rx Only"]) and not verified else "")
         q = max(1, min(int(q), stock)) if stock > 0 else int(q)
         ss.cart[iid] = q
         out.append({"id": iid, "name": r["Product Name"], "batch": r["Batch Number"], "qty": q, "price": float(r["Unit Price (UGX)"]),
-                    "disc": disc_for(q), "stock": stock, "ok": stock > 0 and not bad, "expired": bad})
+                    "disc": disc_for(q), "stock": stock, "ok": not why, "why": why,
+                    "cost": float(r["Cost Price (UGX)"]), "vat": vat_rate(r["Category"])})
     return out
 
 
 def place_order(email, lines, name, phone, rec_email, addr, method, notes):
     u = db["users"][email]
     with LOCK:
-        inv = db["inventory"]
-        for l in lines:
-            r = inv[inv["Item ID"] == l["id"]]
-            if r.empty or int(r.iloc[0]["Stock Quantity"]) < l["qty"]:
-                return None, f"Not enough stock for {l['name']}. Reduce the quantity or remove it."
-            if exp_days(r.iloc[0]["Expiry Date"]) < 0:
-                return None, f"{l['name']} has expired and cannot be ordered."
         out = outlet_of(u["business_name"])
-        o = build_order(f"ORD-{uuid.uuid4().hex[:5].upper()}", u["business_name"], name, phone, rec_email, addr,
-                        [{k: l[k] for k in ("id", "name", "batch", "qty", "price", "disc")} for l in lines], method, notes)
         if out is None or out["Status"] != "Active":
             return None, "Your outlet is not active. Call the manager to resolve this."
+        inv = db["inventory"].set_index("Item ID", drop=False)
+        final = []
+        for l in lines:
+            if l["id"] not in inv.index:
+                return None, f"{l['name']} is no longer in the catalogue."
+            if bool(inv.at[l["id"], "Rx Only"]) and not bool(out["Verified"]):
+                return None, f"{l['name']} is prescription-only. It unlocks once we verify your licence."
+            alloc = allocate(l["id"], l["qty"])
+            if alloc is None:
+                return None, f"Not enough in-date stock for {l['name']}. Reduce the quantity or remove it."
+            for batch, take, exp in alloc:  # one order line per batch so every box is traceable
+                final.append({"id": l["id"], "name": l["name"], "batch": batch, "exp": str(exp), "qty": take, "price": l["price"],
+                              "disc": l["disc"], "cost": l["cost"], "vat": l["vat"]})
+        o = build_order(f"ORD-{uuid.uuid4().hex[:5].upper()}", u["business_name"], name, phone, rec_email, addr, final,
+                        method, notes, account=email)
         if method == "Trade Credit Line":
             avail = out["Credit Limit (UGX)"] - out["Used Credit (UGX)"]
             if not bool(out["Verified"]):
@@ -445,9 +714,9 @@ def place_order(email, lines, name, phone, rec_email, addr, method, notes):
             if o["Total Amount (UGX)"] > avail:
                 return None, f"This order is above your available credit of {ugx(avail)}. Choose another payment method."
             adjust_credit(u["business_name"], o["Total Amount (UGX)"])
-        for l in lines:
-            db["inventory"].loc[db["inventory"]["Item ID"]
-                                == l["id"], "Stock Quantity"] -= l["qty"]
+        for l in final:
+            take_stock(l["id"], l["batch"], l["qty"])
+        sync_inventory()
         add_row("orders", o)
     return o, ""
 
@@ -458,9 +727,9 @@ def cancel_order(oid, reason):
         if o["Status"] != "Processing":
             return False
         for l in lines_of(o):
-            db["inventory"].loc[db["inventory"]["Item ID"]
-                                == l["id"], "Stock Quantity"] += l["qty"]
-        if o["Payment Method"] == "Trade Credit Line":
+            put_stock(l)
+        sync_inventory()
+        if o["Payment Method"] == "Trade Credit Line" and o["Payment Status"] == "On Credit":
             adjust_credit(o["Outlet"], -o["Total Amount (UGX)"])
         upd(oid, **{"Status": "Cancelled",
             "Payment Status": "Refund due" if o["Payment Status"] == "Paid" else "Cancelled"})
@@ -472,16 +741,40 @@ def cancel_order(oid, reason):
 
 
 def mark_paid(oid):
-    o = get_order(oid)
-    if o["Payment Status"] not in UNPAID or o["Status"] == "Cancelled":
-        return False
-    if o["Payment Method"] == "Trade Credit Line":
-        adjust_credit(o["Outlet"], -o["Total Amount (UGX)"])
-    upd(oid, **{"Payment Status": "Paid"})
-    event(oid, "Payment received")
+    with LOCK:
+        o = get_order(oid)
+        if o["Payment Status"] not in UNPAID or o["Status"] == "Cancelled":
+            return False
+        if o["Payment Method"] == "Trade Credit Line":
+            adjust_credit(o["Outlet"], -o["Total Amount (UGX)"])
+        upd(oid, **{"Payment Status": "Paid"})
+        event(oid, "Payment received")
     log(f"Payment received for {oid}")
     push(customer_email(o), f"Payment received for order {oid}. Thank you.")
     return True
+
+
+def dispatch_order(oid, driver, phone, eta):
+    with LOCK:
+        if get_order(oid)["Status"] != "Processing":
+            return None
+        upd(oid, **{"Status": "Dispatched", "Dispatch Time": now(),
+            "Driver": driver, "Driver Phone": phone, "ETA": eta})
+        event(oid, f"Dispatched with {driver}")
+    log(f"Dispatched {oid}")
+    return get_order(oid)
+
+
+def deliver_order(oid, pod_name=None):
+    with LOCK:
+        o = get_order(oid)
+        if o["Status"] != "Dispatched":
+            return None
+        upd(oid, **{"Status": "Delivered", "Delivery Time": now(),
+                    "Payment Status": "Paid" if o["Payment Status"] == "Pay on Delivery" else o["Payment Status"]})
+        event(oid, "Delivered" + (f" (proof: {pod_name})" if pod_name else ""))
+    log(f"Delivered {oid}")
+    return get_order(oid)
 
 
 def add_to_cart(iid):
@@ -537,6 +830,68 @@ def mark_paid_cb(oid):
         oid) else f"{oid} has nothing left to pay."
 
 
+def fc_risks():
+    """Products forecast to run out soon (cached per day / order count / stock level)."""
+    key = (str(today()), len(db["orders"]), int(
+        db["inventory"]["Stock Quantity"].sum()))
+    if ss.get("_fc_key") != key:
+        try:
+            import forecast
+            ss["_fc_val"] = forecast.stockout_risks(db)
+        except Exception:
+            ss["_fc_val"] = []
+        ss["_fc_key"] = key
+    return ss.get("_fc_val", [])
+
+
+# ---- login attempts and password reset codes (server-side, survive page refresh) ----
+def locked_for(key):
+    a = ATTEMPTS.get(key)
+    return max(0, int(a["until"] - time.time())) if a else 0
+
+
+def note_failure(key):
+    a = ATTEMPTS.setdefault(key, {"fails": 0, "until": 0, "ts": time.time()})
+    a["fails"] += 1
+    a["ts"] = time.time()
+    if a["fails"] >= 5:
+        a["until"], a["fails"] = time.time() + 300, 0
+    for k in [k for k, v in ATTEMPTS.items() if time.time() - v["ts"] > 3600 and v["until"] < time.time()]:
+        ATTEMPTS.pop(k, None)
+
+
+def start_reset(em):
+    """Email a 6-digit code. Always behaves the same so nobody can probe which emails are registered."""
+    u = db["users"].get(em)
+    if u and time.time() - ATTEMPTS.get(f"reset:{em}", {}).get("ts", 0) > 60:
+        code = f"{secrets.randbelow(10 ** 6):06d}"
+        u["reset"] = {"h": hp(code), "exp": time.time() + 900, "tries": 0}
+        ATTEMPTS[f"reset:{em}"] = {"fails": 0, "until": 0, "ts": time.time()}
+        _email(em, "MedSupply password reset", f"Your password reset code is {code}. It expires in 15 minutes. "
+               "If you did not ask for this, ignore this email.")
+        save()
+
+
+def finish_reset(em, code, new_pw):
+    u = db["users"].get(em)
+    r = u.get("reset") if u else None
+    if not r or time.time() > r["exp"] or r["tries"] >= 5:
+        return False
+    if not check_pw(code.strip(), r["h"]):
+        r["tries"] += 1
+        save()
+        return False
+    u["password"], u["default_pw"] = hp(new_pw), False
+    u.pop("reset", None)
+    save()
+    return True
+
+
+user = db["users"].get(ss.user)
+if ss.user and not user:
+    ss.user = None
+
+
 # ======================================================================
 # UI HELPERS
 # ======================================================================
@@ -573,10 +928,14 @@ def alert(text, tone=""):
 
 def line_df(orders):
     cat = dict(zip(db["inventory"]["Item ID"], db["inventory"]["Category"]))
-    rows = [{"Date": o["Date"], "Outlet": o["Outlet"], "ID": l["id"], "Product": l["name"].split(" (")[0],
-             "Category": cat.get(l["id"], "Other"), "Qty": l["qty"], "Revenue": l["qty"] * l["price"] * (1 - l["disc"])}
-            for _, o in orders.iterrows() for l in lines_of(o)]
-    return pd.DataFrame(rows, columns=["Date", "Outlet", "ID", "Product", "Category", "Qty", "Revenue"])
+    rows = []
+    for _, o in orders.iterrows():
+        for l in lines_of(o):
+            rev = l["qty"] * l["price"] * (1 - l["disc"])
+            rows.append({"Date": o["Date"], "Outlet": o["Outlet"], "ID": l["id"], "Product": l["name"].split(" (")[0],
+                         "Category": cat.get(l["id"], "Other"), "Qty": l["qty"], "Revenue": rev,
+                         "Cost": l["qty"] * l.get("cost", 0.0)})
+    return pd.DataFrame(rows, columns=["Date", "Outlet", "ID", "Product", "Category", "Qty", "Revenue", "Cost"])
 
 
 def invoice_html(o):
@@ -584,14 +943,17 @@ def invoice_html(o):
                    f"<td class=r>{int(l['disc'] * 100)}%</td><td class=r>{ugx(l['qty'] * l['price'] * (1 - l['disc']))}</td></tr>"
                    for l in lines_of(o))
     paid = o["Payment Status"] == "Paid"
+    vat = float(o["VAT (UGX)"]) if pd.notna(o["VAT (UGX)"]) else 0.0
+    vat_row = f"<br>VAT {ugx(vat)}" if vat > 0 else ""
+    tin = f" · TIN {esc(COMPANY['tin'])}" if COMPANY["tin"] else ""
     return f"""<!doctype html><html><head><meta charset='utf-8'><title>Invoice {esc(o['OrderID'])}</title><style>
 body{{font-family:Arial,sans-serif;color:#10282B;max-width:760px;margin:30px auto;padding:0 20px}}
 h1{{color:#0E6B63;margin:0}}table{{width:100%;border-collapse:collapse;margin:18px 0}}th,td{{padding:8px;border-bottom:1px solid #D9E2DF;text-align:left;font-size:14px}}
 .r{{text-align:right}}.tot{{font-size:18px;font-weight:bold}}.stamp{{display:inline-block;border:3px solid {'#0A5A44' if paid else '#8A4B00'};color:{'#0A5A44' if paid else '#8A4B00'};padding:4px 12px;font-weight:bold;transform:rotate(-4deg)}}
-</style></head><body><h1>{COMPANY['name']}</h1><p>Invoice {esc(o['OrderID'])} · {esc(o['Date'])}</p><span class=stamp>{esc(o['Payment Status']).upper()}</span>
+</style></head><body><h1>{COMPANY['name']}</h1><p>Invoice {esc(o['OrderID'])} · {esc(o['Date'])}{tin}</p><span class=stamp>{esc(o['Payment Status']).upper()}</span>
 <p><b>Bill to:</b> {esc(o['Outlet'])}<br>{esc(o['Recipient Name'])} · {esc(o['Recipient Phone'])}<br>{esc(o['Delivery Location'])}</p>
 <table><tr><th>Product</th><th>Batch</th><th class=r>Boxes</th><th class=r>Unit price</th><th class=r>Discount</th><th class=r>Amount</th></tr>{rows}</table>
-<p class=r>Subtotal {ugx(o['Subtotal (UGX)'])}<br>Volume discount −{ugx(o['Subtotal (UGX)'] - o['Total Amount (UGX)'])}</p>
+<p class=r>Subtotal {ugx(o['Subtotal (UGX)'])}<br>Volume discount −{ugx(o['Subtotal (UGX)'] - (o['Total Amount (UGX)'] - vat))}{vat_row}</p>
 <p class='r tot'>Total {ugx(o['Total Amount (UGX)'])}</p><p>Payment method: {esc(o['Payment Method'])}</p>
 <p style='font-size:12px;color:#567'>Bank: {COMPANY['bank']} · Account {COMPANY['acct']} · Questions? Call {MANAGER['phone']}. Open this file in a browser and choose Print to save as PDF.</p>
 </body></html>"""
@@ -652,6 +1014,9 @@ with st.sidebar:
                   args=("cart",), key="side_cart", **FULL)
     st.divider()
     st.caption(f"Need help? Call {MANAGER['name']}: {MANAGER['phone']}")
+    if is_staff and SAVER["failed"]:
+        st.warning(
+            "The last save to storage failed. Check the Supabase settings in Secrets.")
 
 if ss.get("flash"):
     st.success(ss.pop("flash"))
@@ -694,12 +1059,17 @@ if page == "dash" and is_staff:
     span = st.radio("Period", [7, 14, 30, 90], index=2, horizontal=True,
                     format_func=lambda d: f"Last {d} days", label_visibility="collapsed")
     since = today() - dt.timedelta(days=span)
-    w = live[pd.to_datetime(live["Date"]).dt.date >= since]
+    w = live[pd.to_datetime(live["Date"]).dt.date >=
+             since] if len(live) else live
+    ld = line_df(w)
+    known = ld[ld["Cost"] > 0]
+    margin_txt = f" · {(known['Revenue'].sum() - known['Cost'].sum()) / known['Revenue'].sum():.0%} gross margin" if len(
+        known) and known["Revenue"].sum() else ""
     recv = live[live["Payment Status"].isin(
         UNPAID)]["Total Amount (UGX)"].sum()
     inv = db["inventory"]
     low_n = int((inv["Stock Quantity"] <= inv["Reorder Level"]).sum())
-    kpi_row([("Revenue", ugx(w["Total Amount (UGX)"].sum()), f"{len(w)} orders in {span} days", ""),
+    kpi_row([("Revenue", ugx(w["Total Amount (UGX)"].sum()), f"{len(w)} orders in {span} days{margin_txt}", ""),
              ("Awaiting payment", ugx(
                  recv), f"{len(live[live['Payment Status'].isin(UNPAID)])} open invoices", "sun"),
              ("To ship", str(len(o[o["Status"] == "Processing"])),
@@ -710,14 +1080,20 @@ if page == "dash" and is_staff:
     with c1, st.container(border=True):
         st.subheader("Revenue per day")
         days = pd.date_range(since, today())
-        rev = w.assign(D=pd.to_datetime(w["Date"])).groupby(
-            "D")["Total Amount (UGX)"].sum().reindex(days, fill_value=0)
-        st.area_chart(rev.rename("Revenue (UGX)"), color="#0E6B63", height=250)
+        if len(w):
+            rev = w.assign(D=pd.to_datetime(w["Date"])).groupby(
+                "D")["Total Amount (UGX)"].sum().reindex(days, fill_value=0)
+            st.area_chart(rev.rename("Revenue (UGX)"),
+                          color="#0E6B63", height=250)
+        else:
+            st.caption("No sales in this period.")
     with c2, st.container(border=True):
         st.subheader("Orders by status")
-        st.bar_chart(o.groupby("Status").size().rename(
-            "Orders"), color="#F2B600", height=250)
-    ld = line_df(w)
+        if len(o):
+            st.bar_chart(o.groupby("Status").size().rename(
+                "Orders"), color="#F2B600", height=250)
+        else:
+            st.caption("No orders yet.")
     c3, c4 = st.columns(2)
     with c3, st.container(border=True):
         st.subheader("Best sellers")
@@ -735,18 +1111,25 @@ if page == "dash" and is_staff:
                 ascending=False).head(6), color="#10282B", height=240)
     st.subheader("Needs attention")
     todo = []
+    names = dict(zip(inv["Item ID"], inv["Product Name"]))
     for _, r in inv.iterrows():
-        s, lvl, dd = int(r["Stock Quantity"]), int(
-            r["Reorder Level"]), exp_days(r["Expiry Date"])
+        s, lvl = int(r["Stock Quantity"]), int(r["Reorder Level"])
         if s <= lvl:
             todo.append(("red" if s == 0 else "",
                         f"<b>{esc(r['Product Name'])}</b> has {s} boxes left (reorder at {lvl})", "inv"))
+    bt = db["batches"]
+    for _, b in bt[bt["Qty"] > 0].iterrows():
+        dd, nm = exp_days(b["Expiry Date"]), esc(
+            names.get(b["Item ID"], b["Item ID"]))
         if dd < 0:
             todo.append(
-                ("red", f"<b>{esc(r['Product Name'])}</b> expired on {r['Expiry Date']}. Remove it from sale.", "inv"))
+                ("red", f"<b>{nm}</b> batch {esc(b['Batch Number'])}: {int(b['Qty'])} boxes expired on {b['Expiry Date']}. Write off or return to the supplier.", "inv"))
         elif dd < 180:
             todo.append(
-                ("", f"<b>{esc(r['Product Name'])}</b> expires in {dd} days (batch {esc(r['Batch Number'])})", "inv"))
+                ("", f"<b>{nm}</b> batch {esc(b['Batch Number'])} expires in {dd} days ({int(b['Qty'])} boxes)", "inv"))
+    for p in fc_risks():
+        todo.append(
+            ("", f"<b>{esc(p)}</b> is forecast to run out within 2 weeks", "inv"))
     for _, r in db["outlets"].iterrows():
         if r["Credit Limit (UGX)"] and r["Used Credit (UGX)"] / r["Credit Limit (UGX)"] > .8:
             todo.append(
@@ -762,7 +1145,7 @@ if page == "dash" and is_staff:
             ("", f"<b>{len(o[o['Status'] == 'Processing'])}</b> order(s) waiting to be dispatched", "seller"))
     if not todo:
         alert("Everything is on track. Nothing needs attention.", "ok")
-    for i, (tone, text, target) in enumerate(todo[:10]):
+    for i, (tone, text, target) in enumerate(todo[:12]):
         a, b = st.columns([6, 1])
         with a:
             alert(text, tone)
@@ -781,7 +1164,7 @@ elif page == "dash":
     avail = (out["Credit Limit (UGX)"] -
              out["Used Credit (UGX)"]) if out is not None else 0
     spend30 = live[pd.to_datetime(live["Date"]).dt.date >= today(
-    ) - dt.timedelta(days=30)]["Total Amount (UGX)"].sum()
+    ) - dt.timedelta(days=30)]["Total Amount (UGX)"].sum() if len(live) else 0
     openo = mine[mine["Status"].isin(["Processing", "Dispatched"])]
     kpi_row([("Open orders", str(len(openo)), "being prepared or on the road", ""),
              ("Spent, last 30 days", ugx(spend30),
@@ -873,12 +1256,14 @@ elif page == "market":
         empty("🔍", "No products match",
               "Try a shorter word, switch off In stock only, or choose All categories.")
     favs = user["favs"] if user else []
+    outv = outlet_of(user["business_name"]) if user and not is_staff else None
+    can_rx = outv is not None and bool(outv["Verified"])
     cols = st.columns(3)
     for i, (_, r) in enumerate(df.iterrows()):
         iid, stock, dd = r["Item ID"], int(
             r["Stock Quantity"]), exp_days(r["Expiry Date"])
         lvl = int(r["Reorder Level"]) if pd.notna(r["Reorder Level"]) else 100
-        if dd < 0:
+        if stock == 0 and dd < 0:
             cls, lab = "out", "Expired"
         elif stock == 0:
             cls, lab = "out", "Out of stock"
@@ -887,12 +1272,14 @@ elif page == "market":
         else:
             cls, lab = "ok", f"In stock · {stock}"
         short = "<span class='pill warn'>Short-dated</span>" if 0 <= dd < 180 else ""
+        rx = "<span class='pill info'>Prescription only</span>" if bool(
+            r["Rx Only"]) else ""
         exp = "n/a" if dd == 9999 else pd.to_datetime(
             r["Expiry Date"]).strftime("%b %Y")
         with cols[i % 3], st.container(border=True):
             h1, h2 = st.columns([4, 1])
             h1.markdown(f"<div style='display:flex;gap:8px;align-items:center'><div class='ico'>{CATS.get(r['Category'], '💊')}</div>"
-                        f"<div><span class='pill {cls}'>{lab}</span>{short}</div></div>", unsafe_allow_html=True)
+                        f"<div><span class='pill {cls}'>{lab}</span>{short}{rx}</div></div>", unsafe_allow_html=True)
             h2.button("★" if iid in favs else "☆", key=f"fav_{iid}", on_click=toggle_fav, args=(
                 iid,), disabled=not user, help="Save to favourites")
             st.markdown(f"**{r['Product Name']}**")
@@ -903,8 +1290,13 @@ elif page == "market":
             if not user:
                 st.button(
                     "Log in to order", key=f"o_{iid}", type="primary", on_click=need_login, **FULL)
-            elif stock == 0 or dd < 0:
+            elif is_staff:
+                st.caption("Staff preview. Buyers order from here.")
+            elif stock == 0:
                 st.button("Unavailable", key=f"o_{iid}", disabled=True, **FULL)
+            elif bool(r["Rx Only"]) and not can_rx:
+                st.button("Verified outlets only",
+                          key=f"o_{iid}", disabled=True, **FULL)
             else:
                 a, b = st.columns([1, 2])
                 a.number_input("Boxes", 1, stock, 1,
@@ -933,7 +1325,7 @@ elif page == "cart":
                         b.number_input("Boxes", 1, l["stock"], l["qty"], key=f"cq_{l['id']}", on_change=set_qty, args=(l["id"],),
                                        label_visibility="collapsed")
                     else:
-                        b.error("Expired" if l["expired"] else "Out of stock")
+                        b.error(l["why"])
                     c.markdown(
                         f"**{ugx(l['qty'] * l['price'] * (1 - l['disc']))}**")
                     if l["disc"]:
@@ -941,14 +1333,17 @@ elif page == "cart":
                     d.button("🗑️", key=f"rm_{l['id']}", on_click=remove_item, args=(
                         l["id"],), help="Remove")
         sub = sum(l["qty"] * l["price"] for l in lines)
-        tot = sum(l["qty"] * l["price"] * (1 - l["disc"]) for l in lines)
+        net = sum(l["qty"] * l["price"] * (1 - l["disc"]) for l in lines)
+        vat = sum(l["qty"] * l["price"] * (1 - l["disc"]) * l["vat"]
+                  for l in lines)
+        tot = net + vat
         out = outlet_of(user["business_name"])
         avail = (out["Credit Limit (UGX)"] -
                  out["Used Credit (UGX)"]) if out is not None else 0
         with right, st.container(border=True):
             st.subheader("Checkout")
-            st.markdown(
-                f"Subtotal **{ugx(sub)}**  \nVolume discount **−{ugx(sub - tot)}**")
+            st.markdown(f"Subtotal **{ugx(sub)}**  \nVolume discount **−{ugx(sub - net)}**" + (
+                f"  \nVAT **{ugx(vat)}**" if vat else ""))
             st.metric("Total to pay", ugx(tot))
             name = st.text_input(
                 "Recipient name", user["contact_name"], key="ck_name")
@@ -1113,14 +1508,14 @@ elif page == "seller":
                                 st.error(
                                     "Enter the driver name and a phone number like +256700000000.")
                             else:
-                                upd(oid, **{"Status": "Dispatched", "Dispatch Time": now(
-                                ), "Driver": dn.strip(), "Driver Phone": dp.strip(), "ETA": eta.strip()})
-                                event(oid, f"Dispatched with {dn.strip()}")
-                                log(f"Dispatched {oid}")
-                                fresh = get_order(oid)
-                                push(customer_email(
-                                    fresh), f"Order {oid} is on its way with {dn.strip()}.")
-                                ss.flash = f"{oid} dispatched. {notify(fresh, f'Your order is on its way. Driver {dn.strip()} {dp.strip()}.')}"
+                                fresh = dispatch_order(
+                                    oid, dn.strip(), dp.strip(), eta.strip())
+                                if fresh is None:
+                                    ss.flash = f"{oid} was already handled by someone else."
+                                else:
+                                    push(customer_email(
+                                        fresh), f"Order {oid} is on its way with {dn.strip()}.")
+                                    ss.flash = f"{oid} dispatched. {notify(fresh, f'Your order is on its way. Driver {dn.strip()} {dp.strip()}.')}"
                                 st.rerun()
                 if s == "Dispatched":
                     st.file_uploader("Proof of delivery (optional)", type=[
@@ -1128,16 +1523,14 @@ elif page == "seller":
                     x, y, _ = st.columns([2, 2, 2])
                     if x.button("Mark delivered and send alerts", key=f"v_{oid}", type="primary"):
                         pod = ss.get(f"f_{oid}")
-                        upd(oid, **{"Status": "Delivered", "Delivery Time": now(),
-                                    "Payment Status": "Paid" if r["Payment Status"] == "Pay on Delivery" else r["Payment Status"]})
-                        event(oid, "Delivered" +
-                              (f" (proof: {pod.name})" if pod else ""))
-                        log(f"Delivered {oid}")
-                        fresh = get_order(oid)
-                        push(customer_email(
-                            fresh), f"Order {oid} was delivered. Please confirm the items.")
-                        ss.flash = f"{oid} delivered. {notify(fresh, 'Your order has been delivered.')}"
-                        ss.celebrate = True
+                        fresh = deliver_order(oid, pod.name if pod else None)
+                        if fresh is None:
+                            ss.flash = f"{oid} was already updated by someone else."
+                        else:
+                            push(customer_email(
+                                fresh), f"Order {oid} was delivered. Please confirm the items.")
+                            ss.flash = f"{oid} delivered. {notify(fresh, 'Your order has been delivered.')}"
+                            ss.celebrate = True
                         st.rerun()
                     if y.button("Flag wrong item", key=f"m_{oid}"):
                         upd(oid, **{"Item Verified": "Wrong item flagged"})
@@ -1160,56 +1553,88 @@ elif page == "seller":
 
 elif page == "inv":
     st.header("Inventory")
-    inv = db["inventory"]
-    kpi_row([("Products", str(len(inv)), "", ""), ("Stock value", ugx((inv["Stock Quantity"] * inv["Unit Price (UGX)"]).sum()), "at selling price", ""),
+    inv, bt = db["inventory"], db["batches"]
+    live_b = bt[bt["Qty"] > 0]
+    bdays = live_b["Expiry Date"].map(exp_days)
+    kpi_row([("Products", str(len(inv)), "", ""), ("Stock value", ugx((inv["Stock Quantity"] * inv["Unit Price (UGX)"]).sum()), "in-date stock at selling price", ""),
              ("Low stock", str(int((inv["Stock Quantity"] <= inv["Reorder Level"]).sum(
              ))), "at or under reorder level", "sun"),
-             ("Expiring in 6 months", str(sum(0 <= exp_days(x) < 180 for x in inv["Expiry Date"])), f"{sum(exp_days(x) < 0 for x in inv['Expiry Date'])} already expired", "red")])
+             ("Batches expiring in 6 months", str(int(((bdays >= 0) & (bdays < 180)).sum())), f"{int((bdays < 0).sum())} expired batch(es) still on the shelf", "red")])
     st.write("")
-    t1, t2, t3 = st.tabs(["Stock levels", "Receive stock", "Edit catalogue"])
+    t1, t2, t3, t4, t5 = st.tabs(
+        ["Stock levels", "Batches", "Receive stock", "Edit catalogue", "Demand forecast"])
     with t1:
-        st.bar_chart(inv.set_index("Product Name")[
-                     ["Stock Quantity", "Reorder Level"]], color=["#0E6B63", "#F2B600"], height=300)
+        if len(inv):
+            st.bar_chart(inv.set_index("Product Name")[
+                         ["Stock Quantity", "Reorder Level"]], color=["#0E6B63", "#F2B600"], height=300)
         for _, r in inv.iterrows():
             if int(r["Stock Quantity"]) <= int(r["Reorder Level"]):
                 alert(f"<b>{esc(r['Product Name'])}</b> has {r['Stock Quantity']} boxes left (reorder at {r['Reorder Level']})",
                       "red" if r["Stock Quantity"] == 0 else "")
-            dd = exp_days(r["Expiry Date"])
-            if dd < 180:
-                alert(f"<b>{esc(r['Product Name'])}</b> {'expired' if dd < 0 else f'expires in {dd} days'} · batch {
-                      esc(r['Batch Number'])}", "red" if dd < 0 else "")
-    with t2, st.form("receive"):
+    with t2:
         st.caption(
-            "Record a new delivery from your supplier. The batch and expiry shown to buyers update to the new batch.")
+            "Orders ship the earliest-expiring in-date batch first. Expired batches are never sold.")
+        nm = dict(zip(inv["Item ID"], inv["Product Name"]))
+        view = bt.assign(Product=bt["Item ID"].map(
+            nm), Days=bt["Expiry Date"].map(exp_days))
+        view["Status"] = view["Days"].map(
+            lambda d: "Expired" if d < 0 else "Short-dated" if d < 180 else "OK")
+        view = view[view["Qty"] > 0].sort_values(
+            "Days")[["Product", "Batch Number", "Expiry Date", "Qty", "Days", "Status"]]
+        if view.empty:
+            st.caption("No batches in stock.")
+        else:
+            st.dataframe(view.rename(
+                columns={"Days": "Days to expiry", "Qty": "Boxes"}), hide_index=True, **FULL)
+        n_exp = int(bt[bt["Expiry Date"].map(exp_days) < 0]["Qty"].sum())
+        if n_exp and st.button(f"Write off {n_exp} expired boxes", type="primary"):
+            with LOCK:
+                db["batches"].loc[db["batches"]
+                                  ["Expiry Date"].map(exp_days) < 0, "Qty"] = 0
+                sync_inventory()
+            log(f"Wrote off {n_exp} expired boxes")
+            ss.flash = f"Wrote off {n_exp} expired boxes."
+            st.rerun()
+    with t3, st.form("receive"):
+        st.caption(
+            "Record a new delivery from your supplier. It is added as its own batch; older batches stay on record.")
+        if inv.empty:
+            st.info("Add products under Edit catalogue first.")
         pick = st.selectbox("Product", inv["Product Name"])
         r1, r2, r3 = st.columns(3)
         add_q = r1.number_input("Boxes received", 1, 100000, 100)
         new_b = r2.text_input("Batch number")
         new_e = r3.date_input("Expiry date", today() + dt.timedelta(days=540))
         if st.form_submit_button("Add to stock", type="primary"):
-            if not new_b.strip():
+            if inv.empty:
+                st.error("Add a product to the catalogue first.")
+            elif not new_b.strip():
                 st.error(
                     "Enter the batch number from the supplier's delivery note.")
             elif new_e <= today():
                 st.error("The expiry date must be in the future.")
             else:
-                with LOCK:
-                    m = db["inventory"]["Product Name"] == pick
-                    db["inventory"].loc[m, "Stock Quantity"] += add_q
-                    db["inventory"].loc[m, ["Batch Number", "Expiry Date"]] = [
-                        new_b.strip(), new_e]
-                log(f"Received {add_q} × {pick} (batch {new_b.strip()})")
-                ss.flash = f"Added {add_q} boxes of {pick}."
-                st.rerun()
-    with t3:
-        st.caption(
-            "Edit cells directly, add rows at the bottom, then select Save changes.")
-        edited = st.data_editor(db["inventory"], num_rows="dynamic", key="inv_editor", **FULL, column_config={
-            "Category": st.column_config.SelectboxColumn("Category", options=list(CATS)),
-            "Unit Price (UGX)": st.column_config.NumberColumn(min_value=0, format="%d"),
-            "Stock Quantity": st.column_config.NumberColumn(min_value=0, step=1),
-            "Reorder Level": st.column_config.NumberColumn(min_value=0, step=1),
-            "Expiry Date": st.column_config.DateColumn(format="YYYY-MM-DD")})
+                iid = inv.loc[inv["Product Name"] == pick, "Item ID"].iloc[0]
+                err = receive_stock(iid, new_b.strip(), int(add_q), new_e)
+                if err:
+                    st.error(err)
+                else:
+                    log(f"Received {add_q} × {pick} (batch {new_b.strip()})")
+                    ss.flash = f"Added {add_q} boxes of {pick} as batch {new_b.strip()}."
+                    st.rerun()
+    with t4:
+        st.caption("Edit product details, tick Rx Only for prescription medicines, and add rows at the bottom. "
+                   "Stock, batch and expiry come from the Batches tab, so use Receive stock to add boxes.")
+        edited = st.data_editor(
+            db["inventory"], num_rows="dynamic", key="inv_editor", **FULL,
+            disabled=["Item ID", "Stock Quantity",
+                      "Batch Number", "Expiry Date"],
+            column_config={"Category": st.column_config.SelectboxColumn("Category", options=list(CATS)),
+                           "Unit Price (UGX)": st.column_config.NumberColumn(min_value=0, format="%d"),
+                           "Cost Price (UGX)": st.column_config.NumberColumn(min_value=0, format="%d"),
+                           "Reorder Level": st.column_config.NumberColumn(min_value=0, step=1),
+                           "Rx Only": st.column_config.CheckboxColumn("Rx Only", help="Prescription-only: verified outlets only"),
+                           "Expiry Date": st.column_config.DateColumn(format="YYYY-MM-DD")})
         if st.button("Save changes", type="primary"):
             d = edited[edited["Product Name"].notna() & (
                 edited["Product Name"].astype(str).str.strip() != "")].copy()
@@ -1221,19 +1646,29 @@ elif page == "inv":
                         n += 1
                     d.at[i, "Item ID"] = f"INV-{n:03d}"
                     used.add(f"INV-{n:03d}")
-            for c_, dflt in (("Stock Quantity", 0), ("Unit Price (UGX)", 0), ("Reorder Level", 100)):
+            for c_, dflt in (("Stock Quantity", 0), ("Unit Price (UGX)", 0), ("Cost Price (UGX)", 0), ("Reorder Level", 100)):
                 d[c_] = pd.to_numeric(
                     d[c_], errors="coerce").fillna(dflt).astype(int)
             d["Category"] = d["Category"].fillna("Medical Consumables")
+            d["Rx Only"] = d["Rx Only"].fillna(False).astype(bool)
             d["Expiry Date"] = pd.to_datetime(
                 d["Expiry Date"], errors="coerce").dt.date
             with LOCK:
                 db["inventory"] = d.drop_duplicates(
                     "Item ID").reset_index(drop=True)
+                db["batches"] = db["batches"][db["batches"]["Item ID"].isin(
+                    db["inventory"]["Item ID"])].reset_index(drop=True)
+                sync_inventory()
             log("Edited the product catalogue")
             ss.pop("inv_editor", None)
             ss.flash = "Inventory saved."
             st.rerun()
+    with t5:
+        try:
+            from forecast import render_forecast_tab
+            render_forecast_tab(st, db, ugx, **FULL)
+        except ImportError:
+            st.info("Add forecast.py next to this file to see demand forecasts.")
 
 elif page == "outlets":
     st.header("Outlets & Credit")
@@ -1242,6 +1677,9 @@ elif page == "outlets":
              ("Credit extended", ugx(ot["Credit Limit (UGX)"].sum()), "", ""),
              ("Credit in use", ugx(ot["Used Credit (UGX)"].sum()), "owed to MedSupply", "sun")])
     st.write("")
+    if ot.empty:
+        empty("🏥", "No outlets yet",
+              "Pharmacies and clinics appear here when they register.")
     for i, r in ot.iterrows():
         used, limit = r["Used Credit (UGX)"], r["Credit Limit (UGX)"]
         spent = db["orders"][(db["orders"]["Outlet"] == r["Business Name"]) & (
@@ -1355,7 +1793,7 @@ elif page == "logs":
             f = f[f["Payment Status"].isin(pays)]
         if outs:
             f = f[f["Outlet"].isin(outs)]
-        if isinstance(rng_, (tuple, list)) and len(rng_) == 2:
+        if isinstance(rng_, (tuple, list)) and len(rng_) == 2 and len(f):
             dd_ = pd.to_datetime(f["Date"]).dt.date
             f = f[(dd_ >= rng_[0]) & (dd_ <= rng_[1])]
         fl = f[f["Status"] != "Cancelled"]
@@ -1407,9 +1845,9 @@ elif page == "help":
             return "\n".join(f"• **{r['Product Name']}**: {ugx(r['Unit Price (UGX)'])} · {r['Stock Quantity']} boxes in stock · expires {r['Expiry Date']}"
                              for _, r in hit.iterrows())
         if any(w in tl for w in ("price", "cost", "catalog")):
-            return "\n".join(f"• **{r['Product Name']}**: {ugx(r['Unit Price (UGX)'])}" for _, r in inv.iterrows())
+            return "\n".join(f"• **{r['Product Name']}**: {ugx(r['Unit Price (UGX)'])}" for _, r in inv.iterrows()) or "The catalogue is empty."
         if "stock" in tl or "available" in tl:
-            return "\n".join(f"• **{r['Product Name']}**: {r['Stock Quantity']} boxes" for _, r in inv.iterrows())
+            return "\n".join(f"• **{r['Product Name']}**: {r['Stock Quantity']} boxes" for _, r in inv.iterrows()) or "The catalogue is empty."
         if any(w in tl for w in ("credit", "limit")):
             if not user:
                 return "Log in to see your credit line. Verified outlets can pay on trade credit."
@@ -1442,8 +1880,8 @@ elif page == "help":
 
 elif page == "pay":
     st.header("Payments")
-    st.caption("Demo mode: these forms do not move real money yet.")
-    default = user["phone"] if user else "+256"
+    if DEMO:
+        st.caption("Demo mode: the payment buttons do not move real money.")
     t0, t1, t2 = st.tabs(["Outstanding", "Mobile money", "Bank transfer"])
     with t0:
         if not user:
@@ -1462,16 +1900,20 @@ elif page == "pay":
                     a.caption(
                         f"{r['Payment Method']} · {r['Payment Status']} · {r['Date']}")
                     b.markdown(f"**{ugx(r['Total Amount (UGX)'])}**")
-                    if not is_staff:
+                    if is_staff:
+                        b.button("Record payment", key=f"pn_{r['OrderID']}", on_click=mark_paid_cb, args=(
+                            r["OrderID"],), type="primary")
+                    elif DEMO:
                         b.button("Pay now (demo)", key=f"pn_{r['OrderID']}", on_click=mark_paid_cb, args=(
                             r["OrderID"],), type="primary")
                     else:
-                        b.button("Record payment", key=f"pn_{r['OrderID']}", on_click=mark_paid_cb, args=(
-                            r["OrderID"],), type="primary")
-    for tab, prov in zip((t1,), ["Mobile money"]):
-        with tab:
+                        b.caption(
+                            "Pay by bank transfer and quote the order ID. We mark it paid once received.")
+    with t1:
+        if DEMO:
             net = st.radio("Network", ["MTN", "Airtel"], horizontal=True)
-            ph = st.text_input(f"{net} number", default, key=f"{net}_p")
+            ph = st.text_input(
+                f"{net} number", user["phone"] if user else "+256", key=f"{net}_p")
             amt = st.number_input("Amount (UGX)", 1000,
                                   value=150000, step=10000, key=f"{net}_a")
             if st.button(f"Request {net} payment of {ugx(amt)}", type="primary", key=f"{net}_b"):
@@ -1480,6 +1922,9 @@ elif page == "pay":
                         f"Payment request sent to {ph}. Reference: TXN-{uuid.uuid4().hex[:6].upper()}")
                 else:
                     st.error("Enter the number as +256 followed by 9 digits.")
+        else:
+            st.info(
+                "Mobile money collection is not connected yet. Please pay by bank transfer and quote your order ID.")
     with t2:
         st.markdown(
             f"**Bank:** {COMPANY['bank']}  \n**Account name:** {COMPANY['name']}  \n**Account number:** {COMPANY['acct']}")
@@ -1490,7 +1935,7 @@ elif page == "account":
     if user:
         if user.get("default_pw"):
             st.warning(
-                "You are using a default demo password. Change it under Security.")
+                "You are using a temporary password. Change it under Security.")
         tabs = st.tabs(["Profile", "Security"] +
                        (["Team"] if is_staff else []))
         with tabs[0], st.form("profile"):
@@ -1551,24 +1996,27 @@ elif page == "account":
                         ss.flash = f"{tn.strip()} can now log in."
                         st.rerun()
     else:
+        if secret("ADMIN_PASSWORD") is None:
+            st.warning(
+                "Owner: ADMIN_PASSWORD is not set in Secrets. A one-time admin password was written to the app logs. Set one, then reboot.")
         t1, t2, t3 = st.tabs(["Log in", "Create account", "Reset password"])
         with t1, st.form("login"):
             em = st.text_input("Email").strip().lower()
             pw = st.text_input("Password", type="password")
             if st.form_submit_button("Log in", type="primary", **FULL):
-                if time.time() < ss.lock_until:
+                wait = locked_for(em)
+                if wait:
                     st.error(
-                        f"Too many attempts. Try again in {int(ss.lock_until - time.time())} seconds.")
+                        f"Too many attempts. Try again in {wait} seconds.")
                 elif em in db["users"] and check_pw(pw, db["users"][em]["password"]):
-                    ss.user, ss.fails = em, 0
+                    ATTEMPTS.pop(em, None)
+                    ss.user = em
                     log("Logged in")
                     ss.flash = f"Welcome back, {db['users'][em]['contact_name'].split()[0]}."
                     ss.pending_nav = "dash"
                     st.rerun()
                 else:
-                    ss.fails += 1
-                    if ss.fails >= 5:
-                        ss.lock_until, ss.fails = time.time() + 60, 0
+                    note_failure(em)
                     st.error(
                         "Email or password is incorrect. Check both, or create an account.")
         with t2, st.form("signup"):
@@ -1611,26 +2059,38 @@ elif page == "account":
                     ss.flash = "Account created. You can order now. Trade credit unlocks after we verify your licence."
                     ss.pending_nav = "dash"
                     st.rerun()
-        with t3, st.form("reset"):
-            st.caption(
-                "Demo reset. For production, send a reset link by email or WhatsApp instead.")
-            em = st.text_input("Registered email").strip().lower()
-            ph = st.text_input("Registered phone (+256...)").strip()
-            p1 = st.text_input("New password (8+ characters)", type="password")
-            p2 = st.text_input("Confirm new password", type="password")
-            if st.form_submit_button("Reset password", type="primary", **FULL):
-                if not all([em, ph, p1]):
-                    st.error("Fill in every field.")
-                elif len(p1) < 8:
-                    st.error("Use at least 8 characters.")
-                elif p1 != p2:
-                    st.error("The two passwords do not match.")
-                elif em not in db["users"] or db["users"][em]["phone"].strip() != ph:
-                    st.error("Email and phone do not match any account.")
-                else:
-                    db["users"][em]["password"], db["users"][em]["default_pw"] = hp(
-                        p1), False
-                    save()
-                    st.success("Password updated. You can log in now.")
-
-save() if ss.get("_dirty") else None
+        with t3:
+            if not secret("smtp"):
+                st.info(
+                    f"Password reset by email is not set up yet. Please call {MANAGER['name']} on {MANAGER['phone']}.")
+            else:
+                with st.form("reset_ask"):
+                    st.caption(
+                        "Step 1: we email a 6-digit code to the address on your account.")
+                    em = st.text_input("Registered email").strip().lower()
+                    if st.form_submit_button("Send code", **FULL):
+                        if valid_email(em):
+                            start_reset(em)
+                        st.success(
+                            "If that email is registered, a code is on its way. It expires in 15 minutes.")
+                with st.form("reset_do"):
+                    st.caption(
+                        "Step 2: enter the code and choose a new password.")
+                    em2 = st.text_input("Registered email ").strip().lower()
+                    code = st.text_input("6-digit code")
+                    p1 = st.text_input(
+                        "New password (8+ characters)", type="password")
+                    p2 = st.text_input("Confirm new password", type="password")
+                    if st.form_submit_button("Reset password", type="primary", **FULL):
+                        if not all([em2, code, p1]):
+                            st.error("Fill in every field.")
+                        elif len(p1) < 8:
+                            st.error("Use at least 8 characters.")
+                        elif p1 != p2:
+                            st.error("The two passwords do not match.")
+                        elif finish_reset(em2, code, p1):
+                            log(f"Password reset for {em2}")
+                            st.success("Password updated. You can log in now.")
+                        else:
+                            st.error(
+                                "That code is wrong or has expired. Request a new one.")
