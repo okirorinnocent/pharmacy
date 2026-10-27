@@ -562,6 +562,15 @@ def end_session():
     ss.drop_cookie = True
 
 
+@st.fragment(run_every=10)
+def idle_watch():
+    """Every 10 s: if nothing was clicked or typed for IDLE_SECONDS, log the person out."""
+    if ss.get("user") and time.time() - ss.get("last_active", time.time()) > IDLE_SECONDS:
+        end_session()
+        ss.flash = "You were logged out after 5 minutes of inactivity. Please log in again."
+        st.rerun()
+
+
 def session_js():
     """Zero-height script: keeps the cookies fresh, and logs out after IDLE_SECONDS without activity."""
     if ss.pop("drop_cookie", False) or not ss.user:
@@ -672,6 +681,8 @@ def notify(o, headline):
 ss.setdefault("user", None)
 ss.setdefault("sid", None)
 _ck, _now = _cookies(), time.time()
+# every full rerun is a click/keystroke; fragment timers below do not touch this
+ss.last_active = _now
 for _k in [k for k, v in SESSIONS.items() if _now - v["created"] > SESSION_MAX_AGE]:
     SESSIONS.pop(_k, None)
 if ss.user is None and _ck.get("ms_sid") in SESSIONS:
@@ -1143,7 +1154,10 @@ with st.sidebar:
     if is_staff and SAVER["failed"]:
         st.warning(
             "The last save to storage failed. Check the Supabase settings in Secrets.")
-    components.html(session_js(), height=0)
+    components.html(session_js(), height=1)
+    idle_watch()
+    if user:
+        st.caption("🔒 Auto logout after 5 minutes of inactivity")
 
 if ss.get("flash"):
     st.success(ss.pop("flash"))
