@@ -223,6 +223,14 @@ def _sb():
     return url, str(key).strip().strip("\"'")
 
 
+def _hdr(key):
+    """Legacy JWT keys (eyJ...) go in both headers; new sb_secret_ keys go in apikey only."""
+    h = {"apikey": key}
+    if not key.startswith("sb_"):
+        h["Authorization"] = f"Bearer {key}"
+    return h
+
+
 def _explain(e):
     """Turn a low-level error into something the owner can act on."""
     if isinstance(e, requests.exceptions.ConnectionError):
@@ -248,7 +256,7 @@ def backend_read():
         for attempt in range(3):  # retry temporary network failures
             try:
                 r = requests.get(f"{sb[0]}/rest/v1/app_state", params={"id": "eq.main", "select": "data"},
-                                 headers={"apikey": sb[1], "Authorization": f"Bearer {sb[1]}"}, timeout=10)
+                                 headers=_hdr(sb[1]), timeout=10)
                 r.raise_for_status()
                 rows = r.json()
                 return ("ok", rows[0]["data"]) if rows else ("empty", None)
@@ -275,8 +283,8 @@ def backend_write(blob):
             for attempt in range(2):
                 try:
                     r = requests.post(f"{sb[0]}/rest/v1/app_state", timeout=10, json={"id": "main", "data": blob},
-                                      headers={"apikey": sb[1], "Authorization": f"Bearer {sb[1]}",
-                                               "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates"})
+                                      headers={**_hdr(sb[1]), "Content-Type": "application/json",
+                                               "Prefer": "resolution=merge-duplicates"})
                     if r.status_code in (200, 201, 204):
                         return True
                 except requests.exceptions.RequestException:
