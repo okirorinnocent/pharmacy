@@ -48,7 +48,9 @@ def secret(key, default=None):
     try:
         return st.secrets[key]
     except Exception:
-        return default
+        # hosted on Render etc.: fall back to environment variables
+        v = os.environ.get(key)
+        return v if v not in (None, "") else default
 
 
 DEMO = str(secret("DEMO_DATA", True)).strip(
