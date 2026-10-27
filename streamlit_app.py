@@ -588,7 +588,8 @@ const iv = setInterval(() => {{ if (Date.now() - last > IDLE) {{ clear(); P.loca
 P.__msCleanup = () => {{ clearInterval(iv); evs.forEach(e => D.removeEventListener(e, act)); }};"""
     return f"""<script>
 const P = window.parent, D = P.document, sec = P.location.protocol === "https:" ? "; Secure" : "";
-const set = (k, v, age) => {{ D.cookie = k + "=" + v + "; path=/; max-age=" + age + "; SameSite=Lax" + sec; }};
+const set = (k, v, age) => {{ const c = k + "=" + v + "; path=/; max-age=" + age + "; SameSite=Lax" + sec;
+  try {{ D.cookie = c; }} catch (e) {{}} try {{ document.cookie = c; }} catch (e) {{}} }};
 const clear = () => {{ set("ms_sid", "", 0); set("ms_seen", "", 0); }};
 if (P.__msCleanup) {{ try {{ P.__msCleanup(); }} catch (e) {{}} }}
 {body}
@@ -638,11 +639,32 @@ def push(to, text):
 # ======================================================================
 def _email(to, subject, text):
     try:
-        s = st.secrets["smtp"]
         body = esc(text).replace("\n", "<br>")
         page = (f"<div style='font-family:Arial;max-width:560px;margin:auto;padding:20px;border:1px solid #ddd;border-radius:8px'>"
                 f"<h2 style='color:#0E6B63'>MedSupply Uganda</h2><p>{body}</p>"
                 f"<p style='color:#667;font-size:.85rem'>Questions? Call {MANAGER['phone']}</p></div>")
+        rkey = secret("RESEND_API_KEY")
+        # Resend: plain HTTPS, works on Render (sender must be on your verified domain)
+        if rkey:
+            r = requests.post("https://api.resend.com/emails", timeout=10,
+                              headers={
+                                  "Authorization": f"Bearer {str(rkey).strip()}", "Content-Type": "application/json"},
+                              json={"from": str(secret("RESEND_FROM", "")).strip(), "to": [to],
+                                    "subject": subject, "html": page})
+            if r.status_code in (200, 201, 202):
+                return "Email sent"
+            return f"Email not sent ({r.text[:80]})"
+        api_key = secret("BREVO_API_KEY")
+        if api_key:  # Brevo: works on Render: plain HTTPS, no blocked SMTP ports
+            r = requests.post("https://api.brevo.com/v3/smtp/email", timeout=10,
+                              headers={"api-key": str(api_key).strip(), "accept": "application/json",
+                                       "content-type": "application/json"},
+                              json={"sender": {"name": "MedSupply Uganda", "email": str(secret("BREVO_SENDER", "")).strip()},
+                                    "to": [{"email": to}], "subject": subject, "htmlContent": page})
+            if r.status_code in (200, 201, 202):
+                return "Email sent"
+            return f"Email not sent ({r.text[:80]})"
+        s = st.secrets["smtp"]
         msg = MIMEMultipart("alternative")
         msg["Subject"], msg["From"], msg[
             "To"] = subject, f"MedSupply Uganda <{s['email']}>", to
@@ -660,8 +682,8 @@ def _email(to, subject, text):
 
 def _whatsapp(phone, text):
     try:
-        url = f"https://graph.facebook.com/v18.0/{st.secrets['WHATSAPP_PHONE_NUMBER_ID']}/messages"
-        r = requests.post(url, headers={"Authorization": f"Bearer {st.secrets['WHATSAPP_TOKEN']}"}, timeout=8,
+        url = f"https://graph.facebook.com/v18.0/{secret('WHATSAPP_PHONE_NUMBER_ID')}/messages"
+        r = requests.post(url, headers={"Authorization": f"Bearer {secret('WHATSAPP_TOKEN')}"}, timeout=8,
                           json={"messaging_product": "whatsapp", "to": phone.replace("+", "").strip(),
                                 "type": "text", "text": {"body": text}})
         return "WhatsApp sent" if r.status_code == 200 else f"WhatsApp not sent ({r.json().get('error', {}).get('message', 'API error')})"
@@ -2236,7 +2258,7 @@ elif page == "account":
                     ss.pending_nav = "dash"
                     st.rerun()
         with t3:
-            if not secret("smtp"):
+            if not (secret("RESEND_API_KEY") or secret("BREVO_API_KEY") or secret("smtp")):
                 st.info(
                     f"Password reset by email is not set up yet. Please call {MANAGER['name']} on {MANAGER['phone']}.")
             else:
