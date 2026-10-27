@@ -35,6 +35,7 @@ from email.mime.text import MIMEText
 import pandas as pd
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 
 st.set_page_config(page_title="MedSupply Uganda | B2B Pharma Marketplace", page_icon="💊",
                    layout="wide", initial_sidebar_state="expanded")
@@ -519,6 +520,61 @@ except Exception as e:
 LOCK, SAVER, ATTEMPTS, ss = get_lock(), get_saver(), get_attempts(), st.session_state
 sync_inventory()
 
+# ---- login sessions: cookie remembers the login, 5 minutes idle logs the person out ----
+IDLE_SECONDS = 300          # auto logout after 5 minutes without any activity
+SESSION_MAX_AGE = 86400     # absolute cap on a remembered login (1 day)
+
+
+@st.cache_resource
+def get_sessions(): return {}
+
+
+# token -> {"email", "created"}  (server side; the browser only holds the random token)
+SESSIONS = get_sessions()
+
+
+def _cookies():
+    try:
+        return dict(st.context.cookies)
+    except Exception:
+        return {}
+
+
+def start_session(email):
+    tok = secrets.token_urlsafe(32)
+    SESSIONS[tok] = {"email": email, "created": time.time()}
+    ss.sid, ss.user = tok, email
+
+
+def end_session():
+    SESSIONS.pop(ss.get("sid") or _cookies().get("ms_sid"), None)
+    ss.sid, ss.user, ss.cart = None, None, {}
+    ss.drop_cookie = True
+
+
+def session_js():
+    """Zero-height script: keeps the cookies fresh, and logs out after IDLE_SECONDS without activity."""
+    if ss.pop("drop_cookie", False) or not ss.user:
+        body = "clear();"
+    else:
+        body = f"""
+const IDLE = {IDLE_SECONDS * 1000}, off = {int(time.time() * 1000)} - Date.now();
+let last = Date.now(), t = 0;
+const stamp = () => set("ms_seen", ((Date.now() + off) / 1000).toFixed(3), {SESSION_MAX_AGE});
+set("ms_sid", {json.dumps(ss.sid)}, {SESSION_MAX_AGE}); stamp();
+const act = () => {{ last = Date.now(); if (last - t > 5000) {{ t = last; stamp(); }} }};
+const evs = ["mousemove", "keydown", "click", "scroll", "touchstart"];
+evs.forEach(e => D.addEventListener(e, act, {{passive: true}}));
+const iv = setInterval(() => {{ if (Date.now() - last > IDLE) {{ clear(); P.location.reload(); }} }}, 5000);
+P.__msCleanup = () => {{ clearInterval(iv); evs.forEach(e => D.removeEventListener(e, act)); }};"""
+    return f"""<script>
+const P = window.parent, D = P.document, sec = P.location.protocol === "https:" ? "; Secure" : "";
+const set = (k, v, age) => {{ D.cookie = k + "=" + v + "; path=/; max-age=" + age + "; SameSite=Lax" + sec; }};
+const clear = () => {{ set("ms_sid", "", 0); set("ms_seen", "", 0); }};
+if (P.__msCleanup) {{ try {{ P.__msCleanup(); }} catch (e) {{}} }}
+{body}
+</script>"""
+
 
 def _persist(v):
     with SAVER["lock"]:
@@ -604,6 +660,20 @@ def notify(o, headline):
 # STATE & ORDER OPERATIONS
 # ======================================================================
 ss.setdefault("user", None)
+ss.setdefault("sid", None)
+_ck, _now = _cookies(), time.time()
+for _k in [k for k, v in SESSIONS.items() if _now - v["created"] > SESSION_MAX_AGE]:
+    SESSIONS.pop(_k, None)
+if ss.user is None and _ck.get("ms_sid") in SESSIONS:
+    try:
+        _fresh = _now - float(_ck.get("ms_seen", "0")) <= IDLE_SECONDS
+    except ValueError:
+        _fresh = False
+    if _fresh:   # page refresh within 5 minutes of the last activity: keep the person logged in
+        ss.user, ss.sid = SESSIONS[_ck["ms_sid"]]["email"], _ck["ms_sid"]
+    else:        # came back after more than 5 minutes: log out
+        SESSIONS.pop(_ck["ms_sid"], None)
+        ss.drop_cookie = True
 ss.setdefault("cart", {})
 ss.setdefault("chat", [
               ("bot", "Hello! Ask me about **prices**, **stock**, **credit**, **delivery**, **order status** or the **manager**.")])
@@ -1043,7 +1113,7 @@ with st.sidebar:
         st.markdown(f"**{user['contact_name']}**  \n{user['business_name']}")
         if st.button("Log out", **FULL):
             log("Logged out")
-            ss.user, ss.cart = None, {}
+            end_session()
             st.rerun()
     else:
         st.markdown(
@@ -1063,6 +1133,7 @@ with st.sidebar:
     if is_staff and SAVER["failed"]:
         st.warning(
             "The last save to storage failed. Check the Supabase settings in Secrets.")
+    components.html(session_js(), height=0)
 
 if ss.get("flash"):
     st.success(ss.pop("flash"))
@@ -2091,7 +2162,7 @@ elif page == "account":
                         f"Too many attempts. Try again in {wait} seconds.")
                 elif em in db["users"] and check_pw(pw, db["users"][em]["password"]):
                     ATTEMPTS.pop(em, None)
-                    ss.user = em
+                    start_session(em)
                     log("Logged in")
                     ss.flash = f"Welcome back, {db['users'][em]['contact_name'].split()[0]}."
                     ss.pending_nav = "dash"
@@ -2133,7 +2204,7 @@ elif page == "account":
                     add_row("outlets", {"ID": f"OUT-{uuid.uuid4().hex[:3].upper()}", "Business Name": biz.strip(), "Contact Name": nm.strip(),
                                         "Phone": ph.strip(), "Email": em, "Location": loc.strip(), "License No": lic.strip(), "Verified": False,
                                         "Credit Limit (UGX)": 0, "Used Credit (UGX)": 0, "Status": "Active"})
-                    ss.user = em
+                    start_session(em)
                     log(f"New account {biz.strip()}")
                     push(
                         "staff", f"New outlet {biz.strip()} is waiting for licence verification.")
